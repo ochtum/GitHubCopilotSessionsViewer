@@ -206,6 +206,7 @@ def summarize_copilot_cli_session(path: Path):
         'id': derive_session_id(path),
         'path': str(path),
         'relative_path': str(path),
+        'source': 'cli',
         'mtime': datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
         'session_id': '',
         'started_at': '',
@@ -286,6 +287,7 @@ def summarize_vscode_chat_session(path: Path):
         'id': derive_session_id(path),
         'path': str(path),
         'relative_path': str(path),
+        'source': 'vscode',
         'mtime': datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
         'session_id': derive_session_id(path),
         'started_at': '',
@@ -619,10 +621,14 @@ button {
   font-size: 12px;
   color: #34414f;
 }
+.session-meta-row {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .badge {
   display: inline-block;
-  margin-top: 6px;
-  margin-right: 6px;
   font-size: 11px;
   border-radius: 6px;
   padding: 2px 6px;
@@ -648,6 +654,17 @@ button {
   color: #334155;
   background: #eef2f7;
   border-color: #d4dde8;
+}
+.session-source {
+  color: #0b3a67;
+  background: #e6f1ff;
+  border-color: #bdd9f7;
+  font-weight: 700;
+}
+.session-source.source-vscode {
+  color: #0f5a5a;
+  background: #e5f7f7;
+  border-color: #bfe8e8;
 }
 .right {
   background: var(--panel);
@@ -685,6 +702,19 @@ code.time-code {
   border-radius: 6px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+code.source-code {
+  color: #0b3a67;
+  background: #e6f1ff;
+  border: 1px solid #bdd9f7;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+code.source-code.source-vscode {
+  color: #0f5a5a;
+  background: #e5f7f7;
+  border-color: #bfe8e8;
 }
 .detail-toolbar {
   padding: 10px 12px;
@@ -753,6 +783,11 @@ pre {
       <select id=\"mode\">
         <option value=\"and\">keyword AND</option>
         <option value=\"or\">keyword OR</option>
+      </select>
+      <select id=\"source_filter\">
+        <option value=\"all\">source: all</option>
+        <option value=\"cli\">source: CLI</option>
+        <option value=\"vscode\">source: VS Code</option>
       </select>
       <button id=\"reload\">Reload</button>
     </div>
@@ -824,6 +859,7 @@ function applyFilter(){
   const fromTs = parseOptionalDateStart(document.getElementById('date_from').value);
   const toTs = parseOptionalDateEnd(document.getElementById('date_to').value);
   const mode = document.getElementById('mode').value;
+  const sourceFilter = document.getElementById('source_filter').value;
   const terms = q.split(new RegExp('\\\\s+')).filter(Boolean);
 
   state.filtered = state.sessions.filter(s => {
@@ -833,6 +869,8 @@ function applyFilter(){
     }
 
     const cwdMatched = !cwdQ || (s.cwd || '').toLowerCase().includes(cwdQ);
+    const source = (s.source || 'cli').toLowerCase();
+    const sourceMatched = sourceFilter === 'all' || sourceFilter === source;
 
     let dateMatched = true;
     if(fromTs !== null || toTs !== null){
@@ -858,7 +896,7 @@ function applyFilter(){
         : terms.every(t => target.includes(t));
     }
 
-    return cwdMatched && dateMatched && keywordMatched;
+    return cwdMatched && sourceMatched && dateMatched && keywordMatched;
   });
 
   renderSessionList();
@@ -870,9 +908,14 @@ function renderSessionList(){
     <div class="session-item ${state.activePath === s.path ? 'active' : ''}" data-path="${esc(s.path)}">
       <div class="session-path">${highlightSessionPath(s.relative_path || '')}</div>
       <div class="session-preview">${esc(s.first_user_text || '')}</div>
-      <div class="badge session-cwd">${esc(s.cwd || '-')}</div>
-      <div class="badge session-time">${esc(fmt(s.started_at || s.mtime))}</div>
-      <div class="badge session-id">id: ${esc(s.session_id || s.id || '')}</div>
+      <div class="session-meta-row">
+        <div class="badge session-time">${esc(fmt(s.started_at || s.mtime))}</div>
+        <div class="badge session-source source-${esc((s.source || 'cli').toLowerCase())}">${esc((s.source || 'cli').toLowerCase() === 'vscode' ? 'VS Code' : 'CLI')}</div>
+      </div>
+      <div class="session-meta-row">
+        <div class="badge session-cwd">${esc(s.cwd || '-')}</div>
+        <div class="badge session-id">id: ${esc(s.session_id || s.id || '')}</div>
+      </div>
     </div>
   `).join('');
 
@@ -902,7 +945,9 @@ function renderActiveSession(){
   }
 
   const displayEvents = getDisplayEvents();
-  meta.innerHTML = `path: <code class="path-code">${highlightSessionPath(state.activeSession.relative_path || '')}</code> | cwd: <code class="cwd-code">${esc(state.activeSession.cwd || '-')}</code> | time: <code class="time-code">${esc(fmt(state.activeSession.started_at || state.activeSession.mtime))}</code> | events: ${displayEvents.length}/${state.activeEvents.length} | raw lines: ${state.activeRawLineCount}`;
+  const source = (state.activeSession.source || 'cli').toLowerCase();
+  const sourceLabel = source === 'vscode' ? 'VS Code' : 'CLI';
+  meta.innerHTML = `path: <code class="path-code">${highlightSessionPath(state.activeSession.relative_path || '')}</code> | cwd: <code class="cwd-code">${esc(state.activeSession.cwd || '-')}</code> | time: <code class="time-code">${esc(fmt(state.activeSession.started_at || state.activeSession.mtime))}</code> | source: <code class="source-code source-${esc(source)}">${esc(sourceLabel)}</code> | events: ${displayEvents.length}/${state.activeEvents.length} | raw lines: ${state.activeRawLineCount}`;
 
   eventsBox.innerHTML = displayEvents.map(ev => {
     const role = ev.role || 'system';
@@ -947,6 +992,7 @@ document.getElementById('date_from').addEventListener('change', applyFilter);
 document.getElementById('date_to').addEventListener('change', applyFilter);
 document.getElementById('q').addEventListener('input', applyFilter);
 document.getElementById('mode').addEventListener('change', applyFilter);
+document.getElementById('source_filter').addEventListener('change', applyFilter);
 document.getElementById('reload').addEventListener('click', loadSessions);
 document.getElementById('only_user_instruction').addEventListener('change', renderActiveSession);
 document.getElementById('reverse_order').addEventListener('change', renderActiveSession);
