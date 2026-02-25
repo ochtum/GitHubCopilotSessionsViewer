@@ -601,7 +601,7 @@ button {
 .session-item:hover { background: #eef7ff; }
 .session-item.active { background: #dff0ff; }
 .session-path {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -630,12 +630,14 @@ button {
   background: #f2f8ff;
 }
 .session-cwd {
+  font-size: 12px;
   color: #0b5f3d;
   font-weight: 700;
   background: #e8f7ef;
   border-color: #bfe8cf;
 }
 .session-time {
+  font-size: 12px;
   color: #6b4300;
   font-weight: 700;
   background: #fff3de;
@@ -674,6 +676,15 @@ code.cwd-code {
   padding: 2px 6px;
   border-radius: 6px;
   font-weight: 700;
+}
+code.time-code {
+  color: #6b4300;
+  background: #fff3de;
+  border: 1px solid #f0d3a1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .detail-toolbar {
   padding: 10px 12px;
@@ -859,8 +870,8 @@ function renderSessionList(){
     <div class="session-item ${state.activePath === s.path ? 'active' : ''}" data-path="${esc(s.path)}">
       <div class="session-path">${highlightSessionPath(s.relative_path || '')}</div>
       <div class="session-preview">${esc(s.first_user_text || '')}</div>
-      <div class="badge session-cwd">cwd: ${esc(s.cwd || '-')}</div>
-      <div class="badge session-time">time: ${esc(fmt(s.started_at || s.mtime))}</div>
+      <div class="badge session-cwd">${esc(s.cwd || '-')}</div>
+      <div class="badge session-time">${esc(fmt(s.started_at || s.mtime))}</div>
       <div class="badge session-id">id: ${esc(s.session_id || s.id || '')}</div>
     </div>
   `).join('');
@@ -891,7 +902,7 @@ function renderActiveSession(){
   }
 
   const displayEvents = getDisplayEvents();
-  meta.innerHTML = `path: <code class="path-code">${highlightSessionPath(state.activeSession.relative_path || '')}</code> | cwd: <code class="cwd-code">${esc(state.activeSession.cwd || '-')}</code> | events: ${displayEvents.length}/${state.activeEvents.length} | raw lines: ${state.activeRawLineCount}`;
+  meta.innerHTML = `path: <code class="path-code">${highlightSessionPath(state.activeSession.relative_path || '')}</code> | cwd: <code class="cwd-code">${esc(state.activeSession.cwd || '-')}</code> | time: <code class="time-code">${esc(fmt(state.activeSession.started_at || state.activeSession.mtime))}</code> | events: ${displayEvents.length}/${state.activeEvents.length} | raw lines: ${state.activeRawLineCount}`;
 
   eventsBox.innerHTML = displayEvents.map(ev => {
     const role = ev.role || 'system';
