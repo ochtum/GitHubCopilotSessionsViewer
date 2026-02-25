@@ -474,11 +474,15 @@ def load_vscode_chat_events(path: Path):
                 elif kind == 2 and len(key_path) >= 3 and key_path[0] == 'requests' and key_path[2] == 'response':
                     idx = key_path[1]
                     if isinstance(idx, int) and 0 <= idx < len(requests) and isinstance(val, list):
+                        chunks = []
                         for part in val:
                             if isinstance(part, dict):
                                 text = part.get('value')
                                 if isinstance(text, str) and text:
-                                    requests[idx]['_responses'].append(text)
+                                    chunks.append(text)
+                        merged = ''.join(chunks).strip()
+                        if merged:
+                            requests[idx]['_responses'].append(merged)
                 elif kind == 1 and len(key_path) >= 3 and key_path[0] == 'requests':
                     idx = key_path[1]
                     if isinstance(idx, int) and 0 <= idx < len(requests):
@@ -498,17 +502,18 @@ def load_vscode_chat_events(path: Path):
             events.append({'timestamp': ts, 'kind': 'message', 'role': 'user', 'text': user_text})
 
         assistant_text = ''
-        if req.get('_responses'):
-            assistant_text = req['_responses'][-1]
-        else:
-            result = req.get('_result', {})
-            rounds = result.get('metadata', {}).get('toolCallRounds', [])
-            if isinstance(rounds, list) and rounds:
-                last_round = rounds[-1]
-                if isinstance(last_round, dict):
-                    candidate = last_round.get('response', '')
-                    if isinstance(candidate, str):
-                        assistant_text = candidate
+        result = req.get('_result', {})
+        rounds = result.get('metadata', {}).get('toolCallRounds', [])
+        if isinstance(rounds, list) and rounds:
+            last_round = rounds[-1]
+            if isinstance(last_round, dict):
+                candidate = last_round.get('response', '')
+                if isinstance(candidate, str) and candidate.strip():
+                    assistant_text = candidate
+
+        if not assistant_text and req.get('_responses'):
+            # Stream updates can include partial chunks; keep the most complete text.
+            assistant_text = max(req['_responses'], key=lambda t: len(t or ''))
 
         if assistant_text and len(events) < MAX_EVENTS:
             events.append({'timestamp': ts, 'kind': 'message', 'role': 'assistant', 'text': assistant_text})
