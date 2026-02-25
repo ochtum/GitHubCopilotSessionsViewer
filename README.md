@@ -9,6 +9,23 @@ Windows ユーザープロファイル配下の `C:\Users\<User>\.copilot\sessio
 
 ![image](/image/00001.jpg)
 
+## 前提条件
+
+- Python 3（`py -3` または `python` コマンドが利用可能）
+- Webブラウザ（Edge / Chrome など）
+
+Python 3 が未インストールの場合（Windows / winget）:
+
+```powershell
+winget install -e --id Python.Python.3.12
+```
+
+インストール確認:
+
+```powershell
+py -3 --version
+```
+
 ## Windows から起動
 
 - `scripts\windows\launch_viewer.bat`

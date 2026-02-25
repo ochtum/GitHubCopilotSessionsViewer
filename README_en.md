@@ -9,6 +9,23 @@ A local viewer that reads GitHub Copilot CLI session data from `C:\Users\<User>\
 
 ![image](/image/00001.jpg)
 
+## Prerequisites
+
+- Python 3 (`py -3` or `python` command must be available)
+- A web browser (Edge, Chrome, etc.)
+
+If Python 3 is not installed (Windows / winget):
+
+```powershell
+winget install -e --id Python.Python.3.12
+```
+
+Verify installation:
+
+```powershell
+py -3 --version
+```
+
 ## Launch on Windows
 
 - `scripts\windows\launch_viewer.bat`
