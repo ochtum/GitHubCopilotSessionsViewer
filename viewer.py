@@ -12,37 +12,102 @@ MAX_LIST = 300
 MAX_EVENTS = 3000
 
 
-def get_sessions_dir() -> Path:
+def _unique_paths(paths):
+    out = []
+    seen = set()
+    for p in paths:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
+def _path_exists_safe(path: Path) -> bool:
+    try:
+        return path.exists()
+    except Exception:
+        return False
+
+
+def get_session_roots():
     raw = os.getenv('SESSIONS_DIR') or os.getenv('COPILOT_SESSIONS_DIR')
     if raw:
-        return Path(raw).expanduser()
+        parts = [x.strip() for x in raw.split(os.pathsep) if x.strip()]
+        return _unique_paths([Path(x).expanduser() for x in parts])
+
     candidates = []
-
     userprofile = os.getenv('USERPROFILE')
-    if userprofile:
-        candidates.append(Path(userprofile) / '.copilot' / 'session-state')
-
-    candidates.append(Path.home() / '.copilot' / 'session-state')
-
-    # Fallback for WSL access to Windows profile.
+    appdata = os.getenv('APPDATA')
     win_home = os.getenv('WIN_HOME')
-    if win_home:
-        candidates.append(Path(win_home) / '.copilot' / 'session-state')
+    home = Path.home()
 
-    for c in candidates:
-        if c.exists():
-            return c
-    return candidates[0]
+    if userprofile:
+        up = Path(userprofile)
+        candidates.append(up / '.copilot' / 'session-state')
+        if not appdata:
+            appdata = str(up / 'AppData' / 'Roaming')
+
+    if appdata:
+        code_user = Path(appdata) / 'Code' / 'User'
+        candidates.append(code_user / 'workspaceStorage')
+        candidates.append(code_user / 'globalStorage' / 'github.copilot-chat')
+
+    candidates.append(home / '.copilot' / 'session-state')
+
+    if win_home:
+        wh = Path(win_home)
+        candidates.append(wh / '.copilot' / 'session-state')
+
+    # WSL fallback: discover Windows profiles when USERPROFILE/APPDATA are not available.
+    users_root = Path('/mnt/c/Users')
+    if _path_exists_safe(users_root):
+        try:
+            dirs = list(users_root.iterdir())
+        except Exception:
+            dirs = []
+        for d in dirs:
+            try:
+                if not d.is_dir():
+                    continue
+            except Exception:
+                continue
+            candidates.append(d / '.copilot' / 'session-state')
+            candidates.append(d / 'AppData' / 'Roaming' / 'Code' / 'User' / 'workspaceStorage')
+            candidates.append(d / 'AppData' / 'Roaming' / 'Code' / 'User' / 'globalStorage' / 'github.copilot-chat')
+
+    candidates = _unique_paths(candidates)
+    existing = [p for p in candidates if _path_exists_safe(p)]
+    return existing if existing else candidates
+
+
+def get_sessions_dir() -> Path:
+    roots = get_session_roots()
+    return roots[0]
 
 
 def iter_session_files(root: Path):
-    if not root.exists():
+    if not _path_exists_safe(root):
         return []
     files = []
-    files.extend(root.glob('*.jsonl'))
-    files.extend(root.glob('*/events.jsonl'))
+    root_l = str(root).lower()
+    if 'workspacestorage' in root_l:
+        files.extend(root.glob('*/chatSessions/*.jsonl'))
+    elif 'github.copilot-chat' in root_l:
+        files.extend(root.glob('*.jsonl'))
+    else:
+        files.extend(root.glob('*.jsonl'))
+        files.extend(root.glob('*/events.jsonl'))
     files = [p for p in files if p.is_file()]
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def iter_all_session_files(roots):
+    files = []
+    for root in roots:
+        files.extend(iter_session_files(root))
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return files
 
 
 def extract_text(raw):
@@ -65,6 +130,45 @@ def derive_session_id(path: Path) -> str:
     if path.name == 'events.jsonl':
         return path.parent.name
     return path.stem
+
+
+def detect_log_format(path: Path) -> str:
+    try:
+        with path.open('r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    if 'type' in obj and 'data' in obj:
+                        return 'copilot_cli'
+                    if 'kind' in obj and 'v' in obj:
+                        return 'vscode_chat'
+                break
+    except Exception:
+        pass
+    return 'unknown'
+
+
+def read_workspace_json_for_chat(path: Path) -> str:
+    # workspaceStorage/<hash>/chatSessions/<id>.jsonl
+    ws_json = path.parent.parent / 'workspace.json'
+    if not ws_json.exists():
+        return ''
+    try:
+        obj = json.loads(ws_json.read_text(encoding='utf-8'))
+        folder = obj.get('folder', '')
+        if not isinstance(folder, str):
+            return ''
+        if folder.startswith('file:///'):
+            raw = urllib.parse.unquote(folder[len('file:///'):])
+            return raw.replace('/', '\\')
+        if folder.startswith('file://'):
+            return urllib.parse.unquote(folder[len('file://'):])
+        return folder
+    except Exception:
+        return ''
 
 
 def find_workspace_yaml(path: Path) -> Path | None:
@@ -97,7 +201,7 @@ def parse_workspace_yaml(path: Path) -> dict:
     return data
 
 
-def summarize_session(path: Path):
+def summarize_copilot_cli_session(path: Path):
     summary = {
         'id': derive_session_id(path),
         'path': str(path),
@@ -112,10 +216,13 @@ def summarize_session(path: Path):
         'search_text': '',
     }
 
-    try:
-        summary['relative_path'] = str(path.relative_to(get_sessions_dir()))
-    except Exception:
-        pass
+    summary['relative_path'] = str(path)
+    for root in get_session_roots():
+        try:
+            summary['relative_path'] = str(path.relative_to(root))
+            break
+        except Exception:
+            continue
 
     search_chunks = []
     search_len = 0
@@ -174,7 +281,97 @@ def summarize_session(path: Path):
     return summary
 
 
-def load_session_events(path: Path):
+def summarize_vscode_chat_session(path: Path):
+    summary = {
+        'id': derive_session_id(path),
+        'path': str(path),
+        'relative_path': str(path),
+        'mtime': datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
+        'session_id': derive_session_id(path),
+        'started_at': '',
+        'cwd': read_workspace_json_for_chat(path),
+        'model': '',
+        'summary': '',
+        'first_user_text': '',
+        'search_text': '',
+    }
+    for root in get_session_roots():
+        try:
+            summary['relative_path'] = str(path.relative_to(root))
+            break
+        except Exception:
+            continue
+
+    search_chunks = []
+    search_len = 0
+    search_limit = 2500
+
+    try:
+        with path.open('r', encoding='utf-8') as f:
+            for line in f:
+                obj = json.loads(line)
+                kind = obj.get('kind')
+                key_path = obj.get('k', [])
+                val = obj.get('v')
+
+                if kind == 0 and isinstance(val, dict):
+                    summary['session_id'] = val.get('sessionId', summary['session_id'])
+                    created = val.get('creationDate')
+                    if isinstance(created, (int, float)):
+                        summary['started_at'] = datetime.fromtimestamp(created / 1000).isoformat()
+                    model = val.get('inputState', {}).get('selectedModel', {}).get('identifier', '')
+                    if isinstance(model, str):
+                        summary['model'] = model
+                elif kind == 1 and key_path == ['customTitle'] and isinstance(val, str):
+                    summary['summary'] = val
+                elif kind == 2 and key_path == ['requests'] and isinstance(val, list):
+                    for req in val:
+                        if not isinstance(req, dict):
+                            continue
+                        msg = req.get('message', {})
+                        text = msg.get('text', '') if isinstance(msg, dict) else ''
+                        if text and not summary['first_user_text']:
+                            summary['first_user_text'] = text.replace('\n', ' ')[:180]
+                        if text and search_len < search_limit:
+                            cut = text.replace('\n', ' ')[:300]
+                            search_chunks.append(cut)
+                            search_len += len(cut)
+
+                        resp = req.get('response', [])
+                        if isinstance(resp, list):
+                            for part in resp:
+                                if not isinstance(part, dict):
+                                    continue
+                                val_text = part.get('value', '')
+                                if val_text and search_len < search_limit:
+                                    cut = str(val_text).replace('\n', ' ')[:300]
+                                    search_chunks.append(cut)
+                                    search_len += len(cut)
+                elif kind == 2 and len(key_path) >= 3 and key_path[0] == 'requests' and key_path[2] == 'response':
+                    if isinstance(val, list):
+                        for part in val:
+                            if not isinstance(part, dict):
+                                continue
+                            val_text = part.get('value', '')
+                            if val_text and search_len < search_limit:
+                                cut = str(val_text).replace('\n', ' ')[:300]
+                                search_chunks.append(cut)
+                                search_len += len(cut)
+    except Exception:
+        pass
+
+    summary['search_text'] = ' '.join(search_chunks)
+    return summary
+
+
+def summarize_session(path: Path):
+    fmt = detect_log_format(path)
+    if fmt == 'vscode_chat':
+        return summarize_vscode_chat_session(path)
+    return summarize_copilot_cli_session(path)
+
+
+def load_copilot_cli_events(path: Path):
     events = []
     raw_count = 0
 
@@ -242,6 +439,86 @@ def load_session_events(path: Path):
                 break
 
     return {'events': events, 'raw_line_count': raw_count}
+
+
+def _iso_from_epoch_ms(epoch_ms):
+    if not isinstance(epoch_ms, (int, float)):
+        return ''
+    try:
+        return datetime.fromtimestamp(epoch_ms / 1000).isoformat()
+    except Exception:
+        return ''
+
+
+def load_vscode_chat_events(path: Path):
+    events = []
+    raw_count = 0
+    requests = []
+
+    try:
+        with path.open('r', encoding='utf-8') as f:
+            for line in f:
+                raw_count += 1
+                obj = json.loads(line)
+                kind = obj.get('kind')
+                key_path = obj.get('k', [])
+                val = obj.get('v')
+
+                if kind == 2 and key_path == ['requests'] and isinstance(val, list):
+                    for req in val:
+                        if isinstance(req, dict):
+                            req['_responses'] = []
+                            requests.append(req)
+                elif kind == 2 and len(key_path) >= 3 and key_path[0] == 'requests' and key_path[2] == 'response':
+                    idx = key_path[1]
+                    if isinstance(idx, int) and 0 <= idx < len(requests) and isinstance(val, list):
+                        for part in val:
+                            if isinstance(part, dict):
+                                text = part.get('value')
+                                if isinstance(text, str) and text:
+                                    requests[idx]['_responses'].append(text)
+                elif kind == 1 and len(key_path) >= 3 and key_path[0] == 'requests':
+                    idx = key_path[1]
+                    if isinstance(idx, int) and 0 <= idx < len(requests):
+                        if key_path[2] == 'result' and isinstance(val, dict):
+                            requests[idx]['_result'] = val
+    except Exception:
+        return {'events': events, 'raw_line_count': raw_count}
+
+    for req in requests:
+        if len(events) >= MAX_EVENTS:
+            break
+
+        ts = _iso_from_epoch_ms(req.get('timestamp'))
+        msg = req.get('message', {})
+        user_text = msg.get('text', '') if isinstance(msg, dict) else ''
+        if user_text:
+            events.append({'timestamp': ts, 'kind': 'message', 'role': 'user', 'text': user_text})
+
+        assistant_text = ''
+        if req.get('_responses'):
+            assistant_text = req['_responses'][-1]
+        else:
+            result = req.get('_result', {})
+            rounds = result.get('metadata', {}).get('toolCallRounds', [])
+            if isinstance(rounds, list) and rounds:
+                last_round = rounds[-1]
+                if isinstance(last_round, dict):
+                    candidate = last_round.get('response', '')
+                    if isinstance(candidate, str):
+                        assistant_text = candidate
+
+        if assistant_text and len(events) < MAX_EVENTS:
+            events.append({'timestamp': ts, 'kind': 'message', 'role': 'assistant', 'text': assistant_text})
+
+    return {'events': events, 'raw_line_count': raw_count}
+
+
+def load_session_events(path: Path):
+    fmt = detect_log_format(path)
+    if fmt == 'vscode_chat':
+        return load_vscode_chat_events(path)
+    return load_copilot_cli_events(path)
 
 
 HTML_PAGE = """<!doctype html>
@@ -330,6 +607,13 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.session-path .ts {
+  color: #0b4a52;
+  font-weight: 600;
+  background: #dff5f8;
+  border-radius: 4px;
+  padding: 0 4px;
+}
 .session-preview {
   margin-top: 4px;
   font-size: 12px;
@@ -344,6 +628,24 @@ button {
   padding: 2px 6px;
   border: 1px solid #c7d8ea;
   background: #f2f8ff;
+}
+.session-cwd {
+  color: #0b5f3d;
+  font-weight: 700;
+  background: #e8f7ef;
+  border-color: #bfe8cf;
+}
+.session-time {
+  color: #6b4300;
+  font-weight: 700;
+  background: #fff3de;
+  border-color: #f0d3a1;
+  font-variant-numeric: tabular-nums;
+}
+.session-id {
+  color: #334155;
+  background: #eef2f7;
+  border-color: #d4dde8;
 }
 .right {
   background: var(--panel);
@@ -361,6 +663,14 @@ code.path-code {
   color: #0b4a52;
   background: #e5f4f6;
   border: 1px solid #b8dee3;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+code.cwd-code {
+  color: #0b5f3d;
+  background: #e8f7ef;
+  border: 1px solid #bfe8cf;
   padding: 2px 6px;
   border-radius: 6px;
   font-weight: 700;
@@ -460,6 +770,11 @@ function esc(s){
   return (s ?? '').toString().replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function highlightSessionPath(s){
+  const safe = esc(s);
+  return safe.replace(/(\\d{4}-\\d{2}-\\d{2}T\\d{2}[-:]\\d{2}[-:]\\d{2}(?:[-:]\\d{3,6})?)/g, '<span class="ts">$1</span>');
+}
+
 function fmt(ts){
   if(!ts) return '';
   const d = new Date(ts);
@@ -537,11 +852,11 @@ function renderSessionList(){
   const box = document.getElementById('sessions');
   box.innerHTML = state.filtered.map(s => `
     <div class="session-item ${state.activePath === s.path ? 'active' : ''}" data-path="${esc(s.path)}">
-      <div class="session-path">${esc(s.relative_path || '')}</div>
+      <div class="session-path">${highlightSessionPath(s.relative_path || '')}</div>
       <div class="session-preview">${esc(s.first_user_text || '(previewなし)')}</div>
-      <div class="badge">cwd: ${esc(s.cwd || '-')}</div>
-      <div class="badge">time: ${esc(fmt(s.started_at || s.mtime))}</div>
-      <div class="badge">id: ${esc(s.session_id || s.id || '')}</div>
+      <div class="badge session-cwd">cwd: ${esc(s.cwd || '-')}</div>
+      <div class="badge session-time">time: ${esc(fmt(s.started_at || s.mtime))}</div>
+      <div class="badge session-id">id: ${esc(s.session_id || s.id || '')}</div>
     </div>
   `).join('');
 
@@ -571,7 +886,7 @@ function renderActiveSession(){
   }
 
   const displayEvents = getDisplayEvents();
-  meta.innerHTML = `path: <code class="path-code">${esc(state.activeSession.relative_path || '')}</code> | cwd: ${esc(state.activeSession.cwd || '-')} | events: ${displayEvents.length}/${state.activeEvents.length} | raw lines: ${state.activeRawLineCount}`;
+  meta.innerHTML = `path: <code class="path-code">${highlightSessionPath(state.activeSession.relative_path || '')}</code> | cwd: <code class="cwd-code">${esc(state.activeSession.cwd || '-')}</code> | events: ${displayEvents.length}/${state.activeEvents.length} | raw lines: ${state.activeRawLineCount}`;
 
   eventsBox.innerHTML = displayEvents.map(ev => {
     const role = ev.role || 'system';
@@ -654,14 +969,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == '/api/sessions':
-            root = get_sessions_dir()
-            files = iter_session_files(root)[:MAX_LIST]
+            roots = get_session_roots()
+            files = iter_all_session_files(roots)[:MAX_LIST]
             sessions = [summarize_session(p) for p in files]
-            self._send_json({'root': str(root), 'sessions': sessions})
+            self._send_json({'root': ' | '.join(str(x) for x in roots), 'sessions': sessions})
             return
 
         if parsed.path == '/api/session':
-            root = get_sessions_dir().resolve()
+            roots = [x.resolve() for x in get_session_roots()]
             q = urllib.parse.parse_qs(parsed.query)
             raw_path = q.get('path', [''])[0]
             if not raw_path:
@@ -669,9 +984,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             p = Path(raw_path).expanduser().resolve()
-            try:
-                p.relative_to(root)
-            except Exception:
+            allowed = False
+            for root in roots:
+                try:
+                    p.relative_to(root)
+                    allowed = True
+                    break
+                except Exception:
+                    continue
+            if not allowed:
                 self._send_json({'error': 'path is outside sessions dir'}, 400)
                 return
 
@@ -689,12 +1010,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    root = get_sessions_dir()
+    roots = get_session_roots()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f'Viewer: http://{HOST}:{PORT}')
-    print(f'Sessions dir: {root}')
-    if not root.exists():
-        print('WARNING: sessions dir does not exist. Set SESSIONS_DIR or COPILOT_SESSIONS_DIR.')
+    for root in roots:
+        print(f'Sessions dir: {root}')
+    if not any(root.exists() for root in roots):
+        print('WARNING: sessions dirs do not exist. Set SESSIONS_DIR or COPILOT_SESSIONS_DIR.')
     server.serve_forever()
 
 

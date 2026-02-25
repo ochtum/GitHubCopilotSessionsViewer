@@ -5,7 +5,7 @@
 
 # GitHub Copilot Sessions Viewer
 
-A local viewer that reads GitHub Copilot CLI session data from `C:\Users\<User>\.copilot\session-state` and displays session lists and details.
+A local viewer that reads GitHub Copilot session data from `C:\Users\<User>\.copilot\session-state` and displays session lists and details.
 
 ![image](/image/00001.jpg)
 
@@ -47,7 +47,9 @@ python viewer.py
 
 ## Default Session Directory
 
-- `%USERPROFILE%\.copilot\session-state`
+- `%USERPROFILE%\.copilot\session-state` (GitHub Copilot CLI)
+- `%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl` (VS Code extension chat history)
+- `%APPDATA%\Code\User\globalStorage\github.copilot-chat` (auxiliary data)
 - If not found, `~/.copilot/session-state`
 
 To use a custom directory:

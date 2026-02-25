@@ -5,7 +5,7 @@
 
 # GitHub Copilot Sessions Viewer
 
-Windows ユーザープロファイル配下の `C:\Users\<User>\.copilot\session-state` を読み込み、GitHub Copilot CLI のセッションを一覧・詳細表示するローカル Viewer です。
+Windows ユーザープロファイル配下の `C:\Users\<User>\.copilot\session-state` を読み込み、GitHub Copilotのセッションを一覧・詳細表示するローカル Viewer です。
 
 ![image](/image/00001.jpg)
 
@@ -47,7 +47,9 @@ python viewer.py
 
 ## デフォルト参照先
 
-- `%USERPROFILE%\.copilot\session-state`
+- `%USERPROFILE%\.copilot\session-state`（GitHub Copilot CLI）
+- `%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl`（VS Code 拡張のチャット履歴）
+- `%APPDATA%\Code\User\globalStorage\github.copilot-chat`（補助データ）
 - 見つからない場合は `~/.copilot/session-state`
 
 任意のディレクトリを使う場合:
