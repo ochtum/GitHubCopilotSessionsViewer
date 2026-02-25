@@ -816,6 +816,11 @@ function applyFilter(){
   const terms = q.split(new RegExp('\\\\s+')).filter(Boolean);
 
   state.filtered = state.sessions.filter(s => {
+    const hasPreview = !!(s.first_user_text || '').trim();
+    if(!hasPreview){
+      return false;
+    }
+
     const cwdMatched = !cwdQ || (s.cwd || '').toLowerCase().includes(cwdQ);
 
     let dateMatched = true;
@@ -853,7 +858,7 @@ function renderSessionList(){
   box.innerHTML = state.filtered.map(s => `
     <div class="session-item ${state.activePath === s.path ? 'active' : ''}" data-path="${esc(s.path)}">
       <div class="session-path">${highlightSessionPath(s.relative_path || '')}</div>
-      <div class="session-preview">${esc(s.first_user_text || '(previewなし)')}</div>
+      <div class="session-preview">${esc(s.first_user_text || '')}</div>
       <div class="badge session-cwd">cwd: ${esc(s.cwd || '-')}</div>
       <div class="badge session-time">time: ${esc(fmt(s.started_at || s.mtime))}</div>
       <div class="badge session-id">id: ${esc(s.session_id || s.id || '')}</div>
