@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import sqlite3
 import urllib.parse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -169,6 +170,129 @@ def read_workspace_json_for_chat(path: Path) -> str:
         return folder
     except Exception:
         return ''
+
+
+def read_workspace_json_for_storage_dir(storage_dir: Path) -> str:
+    ws_json = storage_dir / 'workspace.json'
+    if not ws_json.exists():
+        return ''
+    try:
+        obj = json.loads(ws_json.read_text(encoding='utf-8'))
+        folder = obj.get('folder', '')
+        if not isinstance(folder, str):
+            return ''
+        if folder.startswith('file:///'):
+            raw = urllib.parse.unquote(folder[len('file:///'):])
+            return raw.replace('/', '\\')
+        if folder.startswith('file://'):
+            return urllib.parse.unquote(folder[len('file://'):])
+        return folder
+    except Exception:
+        return ''
+
+
+def _iso_from_epoch_ms(epoch_ms):
+    if not isinstance(epoch_ms, (int, float)):
+        return ''
+    try:
+        return datetime.fromtimestamp(epoch_ms / 1000).isoformat()
+    except Exception:
+        return ''
+
+
+def load_vscode_cloud_sessions(roots):
+    sessions = []
+    seen = set()
+    ws_roots = [r for r in roots if 'workspacestorage' in str(r).lower()]
+
+    for ws_root in ws_roots:
+        if not _path_exists_safe(ws_root):
+            continue
+        try:
+            storage_dirs = list(ws_root.iterdir())
+        except Exception:
+            continue
+
+        for storage_dir in storage_dirs:
+            try:
+                if not storage_dir.is_dir():
+                    continue
+            except Exception:
+                continue
+
+            db_path = storage_dir / 'state.vscdb'
+            if not db_path.exists():
+                continue
+
+            cwd = read_workspace_json_for_storage_dir(storage_dir)
+            try:
+                con = sqlite3.connect(str(db_path))
+                cur = con.cursor()
+                cur.execute("SELECT value FROM ItemTable WHERE key='chat.ChatSessionStore.index'")
+                row = cur.fetchone()
+            except Exception:
+                row = None
+            finally:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+
+            if not row:
+                continue
+
+            raw = row[0]
+            if isinstance(raw, bytes):
+                try:
+                    raw = raw.decode('utf-8', errors='replace')
+                except Exception:
+                    raw = ''
+            if not isinstance(raw, str) or not raw:
+                continue
+
+            try:
+                index_obj = json.loads(raw)
+            except Exception:
+                continue
+            entries = index_obj.get('entries', {})
+            if not isinstance(entries, dict):
+                continue
+
+            for resource, entry in entries.items():
+                if not isinstance(resource, str) or not isinstance(entry, dict):
+                    continue
+                if not resource.startswith('copilot-cloud-agent:/'):
+                    continue
+
+                session_id = entry.get('sessionId', '') if isinstance(entry.get('sessionId', ''), str) else ''
+                key = (str(storage_dir), resource, session_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                title = entry.get('title', '') if isinstance(entry.get('title', ''), str) else ''
+                timing = entry.get('timing', {}) if isinstance(entry.get('timing', {}), dict) else {}
+                created_ms = timing.get('created')
+                last_message_ms = entry.get('lastMessageDate')
+                started_at = _iso_from_epoch_ms(created_ms)
+                mtime = _iso_from_epoch_ms(last_message_ms) or started_at or datetime.fromtimestamp(db_path.stat().st_mtime).isoformat()
+                rel = f"{storage_dir.name}/cloud/{resource}"
+
+                sessions.append({
+                    'id': session_id or resource,
+                    'path': f"vscode-cloud://{storage_dir.name}/{urllib.parse.quote(resource, safe='/:')}",
+                    'relative_path': rel,
+                    'source': 'cloud',
+                    'mtime': mtime,
+                    'session_id': session_id or resource,
+                    'started_at': started_at,
+                    'cwd': cwd,
+                    'model': '',
+                    'summary': title,
+                    'first_user_text': title or resource,
+                    'search_text': f"{title} {resource}".strip(),
+                })
+    return sessions
 
 
 def find_workspace_yaml(path: Path) -> Path | None:
@@ -443,15 +567,6 @@ def load_copilot_cli_events(path: Path):
     return {'events': events, 'raw_line_count': raw_count}
 
 
-def _iso_from_epoch_ms(epoch_ms):
-    if not isinstance(epoch_ms, (int, float)):
-        return ''
-    try:
-        return datetime.fromtimestamp(epoch_ms / 1000).isoformat()
-    except Exception:
-        return ''
-
-
 def load_vscode_chat_events(path: Path):
     events = []
     raw_count = 0
@@ -671,6 +786,11 @@ button {
   background: #e5f7f7;
   border-color: #bfe8e8;
 }
+.session-source.source-cloud {
+  color: #5a3b00;
+  background: #fff4df;
+  border-color: #f2d9ab;
+}
 .right {
   background: var(--panel);
   display: flex;
@@ -720,6 +840,11 @@ code.source-code.source-vscode {
   color: #0f5a5a;
   background: #e5f7f7;
   border-color: #bfe8e8;
+}
+code.source-code.source-cloud {
+  color: #5a3b00;
+  background: #fff4df;
+  border-color: #f2d9ab;
 }
 .detail-toolbar {
   padding: 10px 12px;
@@ -793,6 +918,7 @@ pre {
         <option value=\"all\">source: all</option>
         <option value=\"cli\">source: CLI</option>
         <option value=\"vscode\">source: VS Code</option>
+        <option value=\"cloud\">source: Cloud</option>
       </select>
       <button id=\"reload\">Reload</button>
     </div>
@@ -909,13 +1035,14 @@ function applyFilter(){
 
 function renderSessionList(){
   const box = document.getElementById('sessions');
+  const sourceLabelByKey = { cli: 'CLI', vscode: 'VS Code', cloud: 'Cloud' };
   box.innerHTML = state.filtered.map(s => `
     <div class="session-item ${state.activePath === s.path ? 'active' : ''}" data-path="${esc(s.path)}">
       <div class="session-path">${highlightSessionPath(s.relative_path || '')}</div>
       <div class="session-preview">${esc(s.first_user_text || '')}</div>
       <div class="session-meta-row">
         <div class="badge session-time">${esc(fmt(s.started_at || s.mtime))}</div>
-        <div class="badge session-source source-${esc((s.source || 'cli').toLowerCase())}">${esc((s.source || 'cli').toLowerCase() === 'vscode' ? 'VS Code' : 'CLI')}</div>
+        <div class="badge session-source source-${esc((s.source || 'cli').toLowerCase())}">${esc(sourceLabelByKey[(s.source || 'cli').toLowerCase()] || 'CLI')}</div>
       </div>
       <div class="session-meta-row">
         <div class="badge session-cwd">${esc(s.cwd || '-')}</div>
@@ -951,7 +1078,7 @@ function renderActiveSession(){
 
   const displayEvents = getDisplayEvents();
   const source = (state.activeSession.source || 'cli').toLowerCase();
-  const sourceLabel = source === 'vscode' ? 'VS Code' : 'CLI';
+  const sourceLabel = source === 'vscode' ? 'VS Code' : source === 'cloud' ? 'Cloud' : 'CLI';
   meta.innerHTML = `path: <code class="path-code">${highlightSessionPath(state.activeSession.relative_path || '')}</code> | cwd: <code class="cwd-code">${esc(state.activeSession.cwd || '-')}</code> | time: <code class="time-code">${esc(fmt(state.activeSession.started_at || state.activeSession.mtime))}</code> | source: <code class="source-code source-${esc(source)}">${esc(sourceLabel)}</code> | events: ${displayEvents.length}/${state.activeEvents.length} | raw lines: ${state.activeRawLineCount}`;
 
   eventsBox.innerHTML = displayEvents.map(ev => {
@@ -1039,17 +1166,35 @@ class Handler(BaseHTTPRequestHandler):
             roots = get_session_roots()
             files = iter_all_session_files(roots)[:MAX_LIST]
             sessions = [summarize_session(p) for p in files]
+            sessions.extend(load_vscode_cloud_sessions(roots))
+            sessions.sort(key=lambda s: s.get('mtime', ''), reverse=True)
+            sessions = sessions[:MAX_LIST]
             self._send_json({'root': ' | '.join(str(x) for x in roots), 'sessions': sessions})
             return
 
         if parsed.path == '/api/session':
-            roots = [x.resolve() for x in get_session_roots()]
             q = urllib.parse.parse_qs(parsed.query)
             raw_path = q.get('path', [''])[0]
             if not raw_path:
                 self._send_json({'error': 'path is required'}, 400)
                 return
 
+            if raw_path.startswith('vscode-cloud://'):
+                roots = get_session_roots()
+                session = next((s for s in load_vscode_cloud_sessions(roots) if s.get('path') == raw_path), None)
+                if not session:
+                    self._send_json({'error': 'cloud session not found'}, 404)
+                    return
+                events = [{
+                    'timestamp': session.get('mtime', ''),
+                    'kind': 'info',
+                    'role': 'system',
+                    'text': 'This is a cloud-indexed VS Code session. Full message transcript is not available from local jsonl logs.',
+                }]
+                self._send_json({'events': events, 'raw_line_count': 0, 'session': session})
+                return
+
+            roots = [x.resolve() for x in get_session_roots()]
             p = Path(raw_path).expanduser().resolve()
             allowed = False
             for root in roots:
@@ -1079,11 +1224,11 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     roots = get_session_roots()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f'Viewer: http://{HOST}:{PORT}')
+    print(f'Viewer: http://{HOST}:{PORT}', flush=True)
     for root in roots:
-        print(f'Sessions dir: {root}')
+        print(f'Sessions dir: {root}', flush=True)
     if not any(root.exists() for root in roots):
-        print('WARNING: sessions dirs do not exist. Set SESSIONS_DIR or COPILOT_SESSIONS_DIR.')
+        print('WARNING: sessions dirs do not exist. Set SESSIONS_DIR or COPILOT_SESSIONS_DIR.', flush=True)
     server.serve_forever()
 
 

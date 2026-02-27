@@ -5,7 +5,7 @@ set "PID_FILE=%TEMP%\github-copilot-sessions-viewer.pid"
 
 if exist "%PID_FILE%" (
   set /p TARGET_PID=<"%PID_FILE%"
-  if defined TARGET_PID taskkill /PID !TARGET_PID! /F >nul 2>&1
+  if defined TARGET_PID taskkill /PID !TARGET_PID! /T /F >nul 2>&1
   del /q "%PID_FILE%" >nul 2>&1
   goto end
 )
