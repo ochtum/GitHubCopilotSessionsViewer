@@ -9,7 +9,7 @@ set "PY_CMD="
 
 echo Starting GitHub Copilot Sessions Viewer...
 echo Viewer: %URL_TO_OPEN%
-echo Sessions dir: (shown in the CodexSessionViewer-WSL window)
+echo Sessions dir: (shown in the GitHubCopilotSessionViewer-window)
 echo.
 
 where py >nul 2>&1
@@ -28,7 +28,7 @@ if exist "%PID_FILE%" (
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$app='%APP_DIR_WIN%'; $pidFile='%PID_FILE%'; $py='%PY_CMD%';" ^
-  "$cmd='title CodexSessionViewer-WSL && cd /d \"' + $app + '\" && ' + $py + ' viewer.py';" ^
+  "$cmd='title GitHubCopilotSessionViewe && cd /d \"' + $app + '\" && ' + $py + ' viewer.py';" ^
   "$p=Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -PassThru;" ^
   "Set-Content -Path $pidFile -Value $p.Id -Encoding ascii"
 if errorlevel 1 goto startup_failed
@@ -47,7 +47,7 @@ goto wait_loop
 :open_browser
 echo Viewer started successfully.
 echo Viewer: %URL_TO_OPEN%
-echo Sessions dir: (shown in the CodexSessionViewer-WSL window)
+echo Sessions dir: (shown in the GitHubCopilotSessionViewer-window)
 echo.
 start "" "%URL_TO_OPEN%"
 goto end
