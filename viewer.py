@@ -928,7 +928,14 @@ pre {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 8px;
+  padding: 10px 12px;
 }
 @media (max-width: 900px) {
   .container {
@@ -968,6 +975,7 @@ pre {
     <div class=\"meta\" id=\"meta\">セッションを選択してください</div>
     <div class=\"detail-toolbar\">
       <label><input type=\"checkbox\" id=\"only_user_instruction\" /> ユーザー指示のみ表示</label>
+      <label><input type=\"checkbox\" id=\"only_ai_response\" /> AIレスポンスのみ表示</label>
       <label><input type=\"checkbox\" id=\"reverse_order\" /> 表示順を逆にする</label>
     </div>
     <div id=\"events\"></div>
@@ -1101,6 +1109,9 @@ function getDisplayEvents(){
   if(document.getElementById('only_user_instruction').checked){
     events = events.filter(ev => ev.kind === 'message' && ev.role === 'user');
   }
+  if(document.getElementById('only_ai_response').checked){
+    events = events.filter(ev => ev.kind === 'message' && ev.role === 'assistant');
+  }
   if(document.getElementById('reverse_order').checked){
     events = [...events].reverse();
   }
@@ -1168,6 +1179,7 @@ document.getElementById('mode').addEventListener('change', applyFilter);
 document.getElementById('source_filter').addEventListener('change', applyFilter);
 document.getElementById('reload').addEventListener('click', loadSessions);
 document.getElementById('only_user_instruction').addEventListener('change', renderActiveSession);
+document.getElementById('only_ai_response').addEventListener('change', renderActiveSession);
 document.getElementById('reverse_order').addEventListener('change', renderActiveSession);
 
 loadSessions();
