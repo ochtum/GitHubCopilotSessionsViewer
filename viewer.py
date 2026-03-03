@@ -1106,11 +1106,13 @@ function renderSessionList(){
 
 function getDisplayEvents(){
   let events = state.activeEvents || [];
-  if(document.getElementById('only_user_instruction').checked){
-    events = events.filter(ev => ev.kind === 'message' && ev.role === 'user');
-  }
-  if(document.getElementById('only_ai_response').checked){
-    events = events.filter(ev => ev.kind === 'message' && ev.role === 'assistant');
+  const showOnlyUser = document.getElementById('only_user_instruction').checked;
+  const showOnlyAssistant = document.getElementById('only_ai_response').checked;
+  if(showOnlyUser || showOnlyAssistant){
+    events = events.filter(ev => {
+      if(ev.kind !== 'message') return false;
+      return (showOnlyUser && ev.role === 'user') || (showOnlyAssistant && ev.role === 'assistant');
+    });
   }
   if(document.getElementById('reverse_order').checked){
     events = [...events].reverse();
