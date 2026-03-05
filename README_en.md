@@ -58,3 +58,5 @@ To use a custom directory:
 $env:SESSIONS_DIR = 'C:\path\to\session-state'
 python viewer.py
 ```
+
+## ❗This project is licensed under the MIT License, see the LICENSE file for details

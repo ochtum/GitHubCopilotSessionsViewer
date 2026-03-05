@@ -58,3 +58,5 @@ python viewer.py
 $env:SESSIONS_DIR = 'C:\path\to\session-state'
 python viewer.py
 ```
+
+## ❗このプロジェクトは MIT ライセンスの下で提供されています。詳細は LICENSE ファイルをご覧ください。
