@@ -11,6 +11,7 @@ HOST = os.getenv('HOST', '127.0.0.1')
 PORT = 8766
 MAX_LIST = 300
 MAX_EVENTS = 3000
+SEARCH_TEXT_LIMIT = 50000
 
 
 def _unique_paths(paths):
@@ -351,7 +352,7 @@ def summarize_copilot_cli_session(path: Path):
 
     search_chunks = []
     search_len = 0
-    search_limit = 2500
+    search_limit = SEARCH_TEXT_LIMIT
 
     try:
         with path.open('r', encoding='utf-8') as f:
@@ -430,7 +431,7 @@ def summarize_vscode_chat_session(path: Path):
 
     search_chunks = []
     search_len = 0
-    search_limit = 2500
+    search_limit = SEARCH_TEXT_LIMIT
 
     try:
         with path.open('r', encoding='utf-8') as f:
@@ -1039,7 +1040,7 @@ function applyFilter(){
   const toTs = parseOptionalDateEnd(document.getElementById('date_to').value);
   const mode = document.getElementById('mode').value;
   const sourceFilter = document.getElementById('source_filter').value;
-  const terms = q.split(new RegExp('\\\\s+')).filter(Boolean);
+  const terms = q.split(/\\s+/).filter(Boolean);
 
   state.filtered = state.sessions.filter(s => {
     const hasPreview = !!(s.first_user_text || '').trim();
