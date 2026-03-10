@@ -5,7 +5,7 @@
 
 # GitHub Copilot Sessions Viewer
 
-A local viewer that reads GitHub Copilot session data from `C:\Users\<User>\.copilot\session-state` and displays session lists and details.
+A local viewer that reads GitHub Copilot session data on Windows and WSL, then displays session lists and details.
 
 ![image](/image/00001.jpg)
 
@@ -50,7 +50,10 @@ python viewer.py
 - `%USERPROFILE%\.copilot\session-state` (GitHub Copilot CLI)
 - `%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl` (VS Code extension chat history)
 - `%APPDATA%\Code\User\globalStorage\github.copilot-chat` (auxiliary data)
-- If not found, `~/.copilot/session-state`
+- `~/.copilot/session-state` (GitHub Copilot CLI on WSL / Linux)
+- `~/.vscode-server/data/User/workspaceStorage` (VS Code Server on WSL)
+- `~/.vscode-server/data/User/globalStorage/github.copilot-chat` (VS Code Server auxiliary data on WSL)
+- `\\wsl.localhost\<distro>\home\<user>\...` (auto-detected when launched on Windows)
 
 To use a custom directory:
 
@@ -58,3 +61,10 @@ To use a custom directory:
 $env:SESSIONS_DIR = 'C:\path\to\session-state'
 python viewer.py
 ```
+
+Notes:
+
+- `COPILOT_SESSIONS_DIR` can also override the roots.
+- Multiple paths are separated by `os.pathsep` (`;` on Windows, `:` on Unix/WSL).
+- On Windows, `viewer.py` also runs `wsl.exe -l -q` and scans Copilot / VS Code Server session data under each distro home.
+- Set `COPILOT_WSL_DISTROS` to limit which distros are scanned (example: `Ubuntu;Debian`).

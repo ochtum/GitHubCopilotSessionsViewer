@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
+import functools
 import json
+import locale
 import os
+import re
 import sqlite3
+import subprocess
 import urllib.parse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,6 +35,114 @@ def _path_exists_safe(path: Path) -> bool:
         return False
 
 
+def _decode_process_stdout(raw: bytes) -> str:
+    if not raw:
+        return ''
+    encodings = ['utf-16le', 'utf-8', locale.getpreferredencoding(False)] if b'\x00' in raw else ['utf-8', locale.getpreferredencoding(False), 'utf-16le']
+    seen = set()
+    for enc in encodings:
+        if not enc or enc in seen:
+            continue
+        seen.add(enc)
+        try:
+            return raw.decode(enc).replace('\x00', '').strip()
+        except Exception:
+            continue
+    return raw.decode('utf-8', errors='replace').replace('\x00', '').strip()
+
+
+def _run_command_capture(cmd, timeout=5):
+    try:
+        completed = subprocess.run(cmd, capture_output=True, check=False, timeout=timeout)
+    except Exception:
+        return ''
+    if completed.returncode != 0:
+        return ''
+    return _decode_process_stdout(completed.stdout)
+
+
+def _split_simple_list(raw: str):
+    if not isinstance(raw, str):
+        return []
+    return [x.strip() for x in re.split(r'[;,\r\n]+', raw) if x.strip()]
+
+
+def _append_vscode_user_roots(candidates, user_dir: Path):
+    candidates.append(user_dir / 'workspaceStorage')
+    candidates.append(user_dir / 'globalStorage' / 'github.copilot-chat')
+
+
+def _append_wsl_home_roots(candidates, home_dir: Path):
+    candidates.append(home_dir / '.copilot' / 'session-state')
+    _append_vscode_user_roots(candidates, home_dir / '.vscode-server' / 'data' / 'User')
+    _append_vscode_user_roots(candidates, home_dir / '.vscode-server-insiders' / 'data' / 'User')
+
+
+def _wsl_unc_path(distro: str, posix_path: str):
+    if not distro or not isinstance(posix_path, str) or not posix_path.startswith('/'):
+        return None
+    suffix = posix_path.strip('/').replace('/', '\\')
+    base = rf'\\wsl.localhost\{distro}'
+    return Path(base if not suffix else f'{base}\\{suffix}')
+
+
+@functools.lru_cache(maxsize=1)
+def _get_wsl_distros_on_windows():
+    if os.name != 'nt':
+        return []
+
+    override = os.getenv('COPILOT_WSL_DISTROS')
+    if override:
+        return _split_simple_list(override)
+
+    raw = _run_command_capture(['wsl.exe', '-l', '-q'], timeout=6)
+    if not raw:
+        return []
+    return _split_simple_list(raw)
+
+
+def _get_wsl_home_on_windows(distro: str) -> str:
+    if os.name != 'nt' or not distro:
+        return ''
+    raw = _run_command_capture(['wsl.exe', '-d', distro, 'sh', '-lc', "printf '%s' \"$HOME\""], timeout=8)
+    return raw if raw.startswith('/') else ''
+
+
+@functools.lru_cache(maxsize=1)
+def _get_wsl_session_roots_on_windows():
+    distros = _get_wsl_distros_on_windows()
+    if not distros:
+        return []
+
+    candidates = []
+    for distro in distros:
+        actual_home = _get_wsl_home_on_windows(distro)
+        actual_home_root = _wsl_unc_path(distro, actual_home) if actual_home else None
+        if actual_home_root:
+            _append_wsl_home_roots(candidates, actual_home_root)
+
+        home_root = _wsl_unc_path(distro, '/home')
+        if home_root and _path_exists_safe(home_root):
+            try:
+                for d in home_root.iterdir():
+                    try:
+                        if d.is_dir():
+                            _append_wsl_home_roots(candidates, d)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        root_home = _wsl_unc_path(distro, '/root')
+        if root_home:
+            _append_wsl_home_roots(candidates, root_home)
+
+    candidates = _unique_paths(candidates)
+    existing = [p for p in candidates if _path_exists_safe(p)]
+    return existing if existing else candidates
+
+
+@functools.lru_cache(maxsize=1)
 def get_session_roots():
     raw = os.getenv('SESSIONS_DIR') or os.getenv('COPILOT_SESSIONS_DIR')
     if raw:
@@ -51,10 +163,9 @@ def get_session_roots():
 
     if appdata:
         code_user = Path(appdata) / 'Code' / 'User'
-        candidates.append(code_user / 'workspaceStorage')
-        candidates.append(code_user / 'globalStorage' / 'github.copilot-chat')
+        _append_vscode_user_roots(candidates, code_user)
 
-    candidates.append(home / '.copilot' / 'session-state')
+    _append_wsl_home_roots(candidates, home)
 
     if win_home:
         wh = Path(win_home)
@@ -74,8 +185,9 @@ def get_session_roots():
             except Exception:
                 continue
             candidates.append(d / '.copilot' / 'session-state')
-            candidates.append(d / 'AppData' / 'Roaming' / 'Code' / 'User' / 'workspaceStorage')
-            candidates.append(d / 'AppData' / 'Roaming' / 'Code' / 'User' / 'globalStorage' / 'github.copilot-chat')
+            _append_vscode_user_roots(candidates, d / 'AppData' / 'Roaming' / 'Code' / 'User')
+
+    candidates.extend(_get_wsl_session_roots_on_windows())
 
     candidates = _unique_paths(candidates)
     existing = [p for p in candidates if _path_exists_safe(p)]
@@ -152,6 +264,60 @@ def detect_log_format(path: Path) -> str:
     return 'unknown'
 
 
+def _extract_wsl_distro_from_path(path_like) -> str:
+    if path_like is None:
+        return ''
+    m = re.match(r'^\\\\wsl(?:\.localhost)?\\([^\\]+)(?:\\|$)', str(path_like), re.IGNORECASE)
+    return m.group(1) if m else ''
+
+
+def _normalize_display_path(path_str: str, wsl_distro: str = '') -> str:
+    if not isinstance(path_str, str):
+        return ''
+    s = path_str.strip()
+    if not s:
+        return ''
+
+    if s.startswith('vscode-remote://'):
+        parsed = urllib.parse.urlparse(s)
+        if parsed.netloc.startswith('wsl+'):
+            remote_distro = urllib.parse.unquote(parsed.netloc[len('wsl+'):])
+            return _normalize_display_path(urllib.parse.unquote(parsed.path), remote_distro)
+        return urllib.parse.unquote(parsed.path or s)
+
+    if s.startswith('file:///'):
+        return _normalize_display_path(urllib.parse.unquote(s[len('file:///'):]), wsl_distro)
+    if s.startswith('file://'):
+        return _normalize_display_path(urllib.parse.unquote(s[len('file://'):]), wsl_distro)
+
+    m = re.match(r'^/mnt/([a-zA-Z])/(.*)$', s)
+    if m:
+        drive = m.group(1).upper()
+        rest = m.group(2).replace('/', '\\')
+        return f'{drive}:\\{rest}' if rest else f'{drive}:\\'
+
+    if s.startswith('/'):
+        if wsl_distro:
+            rest = s.lstrip('/').replace('/', '\\')
+            base = f'\\\\wsl.localhost\\{wsl_distro}'
+            return f'{base}\\{rest}' if rest else base
+        return s
+
+    if re.match(r'^[a-zA-Z]:/', s):
+        return s.replace('/', '\\')
+    return s
+
+
+def _match_session_root(path: Path):
+    for root in get_session_roots():
+        try:
+            path.relative_to(root)
+            return root
+        except Exception:
+            continue
+    return None
+
+
 def read_workspace_json_for_chat(path: Path) -> str:
     # workspaceStorage/<hash>/chatSessions/<id>.jsonl
     ws_json = path.parent.parent / 'workspace.json'
@@ -162,12 +328,7 @@ def read_workspace_json_for_chat(path: Path) -> str:
         folder = obj.get('folder', '')
         if not isinstance(folder, str):
             return ''
-        if folder.startswith('file:///'):
-            raw = urllib.parse.unquote(folder[len('file:///'):])
-            return raw.replace('/', '\\')
-        if folder.startswith('file://'):
-            return urllib.parse.unquote(folder[len('file://'):])
-        return folder
+        return _normalize_display_path(folder, _extract_wsl_distro_from_path(path))
     except Exception:
         return ''
 
@@ -181,12 +342,7 @@ def read_workspace_json_for_storage_dir(storage_dir: Path) -> str:
         folder = obj.get('folder', '')
         if not isinstance(folder, str):
             return ''
-        if folder.startswith('file:///'):
-            raw = urllib.parse.unquote(folder[len('file:///'):])
-            return raw.replace('/', '\\')
-        if folder.startswith('file://'):
-            return urllib.parse.unquote(folder[len('file://'):])
-        return folder
+        return _normalize_display_path(folder, _extract_wsl_distro_from_path(storage_dir))
     except Exception:
         return ''
 
@@ -300,7 +456,9 @@ def find_workspace_yaml(path: Path) -> Path | None:
         p = path.parent / 'workspace.yaml'
         return p if p.exists() else None
 
-    root = get_sessions_dir()
+    root = _match_session_root(path)
+    if root is None:
+        return None
     session_id = derive_session_id(path)
     p = root / session_id / 'workspace.yaml'
     if p.exists():
@@ -341,13 +499,12 @@ def summarize_copilot_cli_session(path: Path):
         'search_text': '',
     }
 
-    summary['relative_path'] = str(path)
-    for root in get_session_roots():
+    matched_root = _match_session_root(path)
+    if matched_root is not None:
         try:
-            summary['relative_path'] = str(path.relative_to(root))
-            break
+            summary['relative_path'] = str(path.relative_to(matched_root))
         except Exception:
-            continue
+            summary['relative_path'] = str(path)
 
     search_chunks = []
     search_len = 0
@@ -402,6 +559,7 @@ def summarize_copilot_cli_session(path: Path):
     if not summary['session_id']:
         summary['session_id'] = summary['id']
 
+    summary['cwd'] = _normalize_display_path(summary['cwd'], _extract_wsl_distro_from_path(matched_root or path))
     summary['search_text'] = ' '.join(search_chunks)
     return summary
 
@@ -421,12 +579,12 @@ def summarize_vscode_chat_session(path: Path):
         'first_user_text': '',
         'search_text': '',
     }
-    for root in get_session_roots():
+    matched_root = _match_session_root(path)
+    if matched_root is not None:
         try:
-            summary['relative_path'] = str(path.relative_to(root))
-            break
+            summary['relative_path'] = str(path.relative_to(matched_root))
         except Exception:
-            continue
+            summary['relative_path'] = str(path)
 
     search_chunks = []
     search_len = 0
@@ -486,6 +644,7 @@ def summarize_vscode_chat_session(path: Path):
     except Exception:
         pass
 
+    summary['cwd'] = _normalize_display_path(summary['cwd'], _extract_wsl_distro_from_path(matched_root or path))
     summary['search_text'] = ' '.join(search_chunks)
     return summary
 

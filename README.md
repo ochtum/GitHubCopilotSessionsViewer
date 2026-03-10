@@ -5,7 +5,7 @@
 
 # GitHub Copilot Sessions Viewer
 
-Windows ユーザープロファイル配下の `C:\Users\<User>\.copilot\session-state` を読み込み、GitHub Copilotのセッションを一覧・詳細表示するローカル Viewer です。
+Windows / WSL 上の GitHub Copilot セッションを読み込み、一覧・詳細表示するローカル Viewer です。
 
 ![image](/image/00001.jpg)
 
@@ -50,7 +50,10 @@ python viewer.py
 - `%USERPROFILE%\.copilot\session-state`（GitHub Copilot CLI）
 - `%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl`（VS Code 拡張のチャット履歴）
 - `%APPDATA%\Code\User\globalStorage\github.copilot-chat`（補助データ）
-- 見つからない場合は `~/.copilot/session-state`
+- `~/.copilot/session-state`（WSL / Linux の GitHub Copilot CLI）
+- `~/.vscode-server/data/User/workspaceStorage`（WSL 上の VS Code Server）
+- `~/.vscode-server/data/User/globalStorage/github.copilot-chat`（WSL 上の VS Code Server 補助データ）
+- `\\wsl.localhost\<distro>\home\<user>\...`（Windows 起動時に WSL ディストリを自動検出）
 
 任意のディレクトリを使う場合:
 
@@ -58,3 +61,10 @@ python viewer.py
 $env:SESSIONS_DIR = 'C:\path\to\session-state'
 python viewer.py
 ```
+
+補足:
+
+- `COPILOT_SESSIONS_DIR` でも上書きできます。
+- 複数指定は `os.pathsep` 区切り（Windows は `;`, Unix/WSL は `:`）です。
+- Windows 版 `viewer.py` は `wsl.exe -l -q` を使って WSL ディストリを列挙し、各ディストリのホーム配下にある Copilot / VS Code Server のセッションを探索します。
+- 自動検出対象のディストリを絞る場合は `COPILOT_WSL_DISTROS` を指定できます（例: `Ubuntu;Debian`）。
