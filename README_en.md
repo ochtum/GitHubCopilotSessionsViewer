@@ -68,3 +68,5 @@ Notes:
 - Multiple paths are separated by `os.pathsep` (`;` on Windows, `:` on Unix/WSL).
 - On Windows, `viewer.py` also runs `wsl.exe -l -q` and scans Copilot / VS Code Server session data under each distro home.
 - Set `COPILOT_WSL_DISTROS` to limit which distros are scanned (example: `Ubuntu;Debian`).
+
+## ❗This project is licensed under the MIT License, see the LICENSE file for details
