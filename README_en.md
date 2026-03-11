@@ -45,6 +45,27 @@ http://127.0.0.1:8766
 python viewer.py
 ```
 
+## UI Features
+
+- Left pane: session list (newest first)
+- Session `source` labels (`CLI` / `VS Code` / `Cloud`) are shown in the list
+- Top-left filters: narrow down by `cwd`, date range, keyword, and `source`
+- Search is partial match against `relative_path`, first user input, and summary/search text
+- `cwd` / date range / keyword / `source` are always combined with AND
+- `AND/OR` switch applies only within the keyword field
+  - `AND`: must include all space-separated keywords
+  - `OR`: must include at least one space-separated keyword
+- Right pane: timeline of events for the selected session
+  - The detail header also shows the `source` label (`CLI` / `VS Code` / `Cloud`)
+  - Display options
+    - `Show only user instructions`
+    - `Show only AI responses`
+    - `Reverse display order`
+  - `Copy Resume Command` copies `copilot --resume session-id`
+  - On successful copy, the button text temporarily changes to `コピーしました`
+  - `message` (`user` / `assistant` / `system`)
+  - Includes `function_call` / `tool_start` / `tool_output` / `info` / `error` / `assistant.turn_*`
+
 ## Default Session Directory
 
 - `%USERPROFILE%\.copilot\session-state` (GitHub Copilot CLI)

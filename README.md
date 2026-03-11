@@ -45,6 +45,26 @@ http://127.0.0.1:8766
 python viewer.py
 ```
 
+## 画面機能
+
+- 左ペイン: セッション一覧（最新順）
+- 一覧にセッション `source` ラベル（`CLI` / `VS Code` / `Cloud`）を表示
+- 左上 filter: `cwd` / 日付範囲 / キーワード / `source` で絞り込み
+- 検索は一部一致（部分一致）。`relative_path` / 先頭ユーザー入力 / 要約・検索用テキストを対象
+- `cwd` / 日付範囲 / キーワード / `source` は常に AND 条件で評価
+- `AND/OR` 切替はキーワード欄内のみ
+  - `AND`: スペース区切りキーワードをすべて含む
+  - `OR`: スペース区切りキーワードのどれかを含む
+- 右ペイン: 選択セッションのイベント時系列表示
+  - 詳細ヘッダーに `source` ラベル（`CLI` / `VS Code` / `Cloud`）を表示
+  - 表示オプション
+    - 「ユーザー指示のみ表示」
+    - 「AIレスポンスのみ表示」
+    - 「表示順を逆にする」
+  - 「セッション再開コマンドコピー」ボタンで `copilot --resume セッションID` をコピー
+  - `message`（`user` / `assistant` / `system`）
+  - `function_call` / `tool_start` / `tool_output` / `info` / `error` / `assistant.turn_*` などを表示
+
 ## デフォルト参照先
 
 - `%USERPROFILE%\.copilot\session-state`（GitHub Copilot CLI）
