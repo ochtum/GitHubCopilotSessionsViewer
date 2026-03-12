@@ -1135,6 +1135,7 @@ pre {
         <option value=\"cloud\">source: Cloud</option>
       </select>
       <button id=\"reload\">Reload</button>
+      <button id=\"clear\">Clear</button>
     </div>
     <div id=\"sessions\"></div>
   </aside>
@@ -1158,6 +1159,7 @@ const state = {
   activeEvents: [],
   activeRawLineCount: 0,
 };
+const FILTER_STORAGE_KEY = 'github_copilot_sessions_viewer_filters_v1';
 
 function esc(s){
   return (s ?? '').toString().replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
@@ -1248,6 +1250,73 @@ async function loadSessions(){
   state.sessions = data.sessions || [];
   document.getElementById('root').textContent = data.root || '';
   applyFilter();
+  if(state.activePath){
+    const exists = state.sessions.some(s => s.path === state.activePath);
+    if(exists){
+      await openSession(state.activePath);
+    } else {
+      state.activePath = null;
+      state.activeSession = null;
+      state.activeEvents = [];
+      state.activeRawLineCount = 0;
+      renderSessionList();
+      renderActiveSession();
+    }
+  }
+}
+
+function saveFilters(){
+  const payload = {
+    cwd_q: document.getElementById('cwd_q').value,
+    date_from: document.getElementById('date_from').value,
+    date_to: document.getElementById('date_to').value,
+    q: document.getElementById('q').value,
+    mode: document.getElementById('mode').value,
+    source_filter: document.getElementById('source_filter').value,
+  };
+  try {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(payload));
+  } catch (e) {
+    // Ignore storage write errors.
+  }
+}
+
+function restoreFilters(){
+  let raw = null;
+  try {
+    raw = localStorage.getItem(FILTER_STORAGE_KEY);
+  } catch (e) {
+    raw = null;
+  }
+  if(!raw) return;
+  try {
+    const data = JSON.parse(raw);
+    if(typeof data.cwd_q === 'string') document.getElementById('cwd_q').value = data.cwd_q;
+    if(typeof data.date_from === 'string') document.getElementById('date_from').value = data.date_from;
+    if(typeof data.date_to === 'string') document.getElementById('date_to').value = data.date_to;
+    if(typeof data.q === 'string') document.getElementById('q').value = data.q;
+    if(data.mode === 'and' || data.mode === 'or') document.getElementById('mode').value = data.mode;
+    if(data.source_filter === 'all' || data.source_filter === 'cli' || data.source_filter === 'vscode' || data.source_filter === 'cloud'){
+      document.getElementById('source_filter').value = data.source_filter;
+    }
+  } catch (e) {
+    // Ignore invalid saved filters.
+  }
+}
+
+function clearFilters(){
+  document.getElementById('cwd_q').value = '';
+  document.getElementById('date_from').value = '';
+  document.getElementById('date_to').value = '';
+  document.getElementById('q').value = '';
+  document.getElementById('mode').value = 'and';
+  document.getElementById('source_filter').value = 'all';
+  try {
+    localStorage.removeItem(FILTER_STORAGE_KEY);
+  } catch (e) {
+    // Ignore storage delete errors.
+  }
+  applyFilter();
 }
 
 function applyFilter(){
@@ -1296,6 +1365,7 @@ function applyFilter(){
     return cwdMatched && sourceMatched && dateMatched && keywordMatched;
   });
 
+  saveFilters();
   renderSessionList();
 }
 
@@ -1401,12 +1471,14 @@ document.getElementById('q').addEventListener('input', applyFilter);
 document.getElementById('mode').addEventListener('change', applyFilter);
 document.getElementById('source_filter').addEventListener('change', applyFilter);
 document.getElementById('reload').addEventListener('click', loadSessions);
+document.getElementById('clear').addEventListener('click', clearFilters);
 document.getElementById('only_user_instruction').addEventListener('change', renderActiveSession);
 document.getElementById('only_ai_response').addEventListener('change', renderActiveSession);
 document.getElementById('reverse_order').addEventListener('change', renderActiveSession);
 document.getElementById('copy_resume_command').addEventListener('click', copyResumeCommand);
 updateCopyResumeButtonState();
 
+restoreFilters();
 loadSessions();
 </script>
 </body>
