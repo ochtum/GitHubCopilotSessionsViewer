@@ -1030,6 +1030,13 @@ label {
   background: #94a3b8;
   cursor: not-allowed;
 }
+.detail-toolbar #refresh_detail {
+  background: #1d4ed8;
+}
+.detail-toolbar #refresh_detail:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
 #events {
   padding: 14px;
   overflow: auto;
@@ -1145,6 +1152,7 @@ pre {
       <label><input type=\"checkbox\" id=\"only_user_instruction\" /> ユーザー指示のみ表示</label>
       <label><input type=\"checkbox\" id=\"only_ai_response\" /> AIレスポンスのみ表示</label>
       <label><input type=\"checkbox\" id=\"reverse_order\" /> 表示順を逆にする</label>
+      <button id=\"refresh_detail\" disabled>Refresh</button>
       <button id=\"copy_resume_command\" disabled>セッション再開コマンドコピー</button>
     </div>
     <div id=\"events\"></div>
@@ -1202,6 +1210,11 @@ function getActiveSessionId(){
 function updateCopyResumeButtonState(){
   const button = document.getElementById('copy_resume_command');
   button.disabled = !getActiveSessionId();
+}
+
+function updateRefreshDetailButtonState(){
+  const button = document.getElementById('refresh_detail');
+  button.disabled = !state.activePath;
 }
 
 async function copyResumeCommand(){
@@ -1411,6 +1424,7 @@ function getDisplayEvents(){
 function renderActiveSession(){
   const meta = document.getElementById('meta');
   const eventsBox = document.getElementById('events');
+  updateRefreshDetailButtonState();
   if(!state.activeSession){
     meta.textContent = 'セッションを選択してください';
     eventsBox.innerHTML = '';
@@ -1446,7 +1460,7 @@ async function openSession(path){
   state.activePath = path;
   renderSessionList();
 
-  const r = await fetch('/api/session?path=' + encodeURIComponent(path));
+  const r = await fetch('/api/session?path=' + encodeURIComponent(path) + '&ts=' + Date.now(), { cache: 'no-store' });
   const data = await r.json();
   if(data.error){
     state.activeSession = null;
@@ -1454,6 +1468,7 @@ async function openSession(path){
     state.activeRawLineCount = 0;
     document.getElementById('meta').textContent = data.error;
     document.getElementById('events').innerHTML = '';
+    updateRefreshDetailButtonState();
     updateCopyResumeButtonState();
     return;
   }
@@ -1462,6 +1477,11 @@ async function openSession(path){
   state.activeEvents = data.events || [];
   state.activeRawLineCount = data.raw_line_count || 0;
   renderActiveSession();
+}
+
+async function refreshActiveSession(){
+  if(!state.activePath) return;
+  await openSession(state.activePath);
 }
 
 document.getElementById('cwd_q').addEventListener('input', applyFilter);
@@ -1475,8 +1495,10 @@ document.getElementById('clear').addEventListener('click', clearFilters);
 document.getElementById('only_user_instruction').addEventListener('change', renderActiveSession);
 document.getElementById('only_ai_response').addEventListener('change', renderActiveSession);
 document.getElementById('reverse_order').addEventListener('change', renderActiveSession);
+document.getElementById('refresh_detail').addEventListener('click', refreshActiveSession);
 document.getElementById('copy_resume_command').addEventListener('click', copyResumeCommand);
 updateCopyResumeButtonState();
+updateRefreshDetailButtonState();
 
 restoreFilters();
 loadSessions();
