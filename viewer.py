@@ -20,6 +20,7 @@ SEARCH_TEXT_LIMIT = 50000
 SEARCH_INDEX_TEXT_LIMIT = 0
 SEARCH_INDEX_SCHEMA_VERSION = 3
 SEARCH_INDEX_DB_PATH = Path(__file__).resolve().parent / ".cache" / "search_index.sqlite3"
+MAX_JSON_BODY_BYTES = 1_000_000
 _SESSION_CACHE = {}
 _SESSION_CACHE_LOCK = threading.Lock()
 _SEARCH_INDEX_LOCK = threading.Lock()
@@ -44,7 +45,7 @@ def _unique_paths(paths):
     out = []
     seen = set()
     for p in paths:
-        key = str(p)
+        key = session_path_key(p)
         if key not in seen:
             seen.add(key)
             out.append(p)
@@ -56,6 +57,33 @@ def _path_exists_safe(path: Path) -> bool:
         return path.exists()
     except Exception:
         return False
+
+
+def windows_path_to_wsl(path_str: str):
+    m = re.match(r"^([A-Za-z]):[\\/](.*)$", path_str)
+    if not m:
+        return None
+    drive = m.group(1).lower()
+    rest = m.group(2).replace("\\", "/").lstrip("/")
+    return Path("/mnt") / drive / rest
+
+
+def canonicalize_path(path) -> Path:
+    candidate = Path(path).expanduser()
+    if isinstance(path, str):
+        converted = windows_path_to_wsl(path)
+        if converted is not None and not _path_exists_safe(candidate):
+            candidate = converted
+    try:
+        return candidate.resolve(strict=False)
+    except TypeError:
+        return candidate.resolve()
+    except Exception:
+        return candidate.absolute()
+
+
+def session_path_key(path) -> str:
+    return str(canonicalize_path(path))
 
 
 def _decode_process_stdout(raw: bytes) -> str:
@@ -219,6 +247,11 @@ def get_session_roots():
     return existing if existing else candidates
 
 
+@functools.lru_cache(maxsize=1)
+def get_canonical_session_roots():
+    return _unique_paths(canonicalize_path(root) for root in get_session_roots())
+
+
 def get_sessions_dir() -> Path:
     roots = get_session_roots()
     return roots[0]
@@ -245,7 +278,7 @@ def iter_all_session_files(roots):
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     unique = {}
     for path in files:
-        unique[str(path)] = path
+        unique[session_path_key(path)] = canonicalize_path(path)
     return list(unique.values())
 
 
@@ -335,9 +368,10 @@ def _normalize_display_path(path_str: str, wsl_distro: str = "") -> str:
 
 
 def _match_session_root(path: Path):
-    for root in get_session_roots():
+    canonical_path = canonicalize_path(path)
+    for root in get_canonical_session_roots():
         try:
-            path.relative_to(root)
+            canonical_path.relative_to(root)
             return root
         except Exception:
             continue
@@ -396,13 +430,14 @@ def parse_workspace_yaml(path: Path):
 
 
 def to_relative_path(path: Path) -> str:
-    root = _match_session_root(path)
+    canonical_path = canonicalize_path(path)
+    root = _match_session_root(canonical_path)
     if root is None:
-        return str(path)
+        return str(canonical_path)
     try:
-        return str(path.relative_to(root))
+        return str(canonical_path.relative_to(root))
     except Exception:
-        return str(path)
+        return str(canonical_path)
 
 
 def stringify_search_value(value) -> str:
@@ -465,6 +500,8 @@ def parse_json_body(handler):
     length = parse_optional_int(handler.headers.get("Content-Length"))
     if not length or length < 0:
         return {}
+    if length > MAX_JSON_BODY_BYTES:
+        raise ValueError("request body too large")
     raw = handler.rfile.read(length)
     if not raw:
         return {}
@@ -623,11 +660,12 @@ def _search_prefix_from_summary(summary):
 
 
 def build_copilot_cli_search_record(path: Path, stat_result=None):
+    path = canonicalize_path(path)
     st = stat_result if stat_result is not None else path.stat()
     matched_root = _match_session_root(path)
     summary = {
         "id": derive_session_id(path),
-        "path": str(path),
+        "path": session_path_key(path),
         "relative_path": to_relative_path(path),
         "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(),
         "session_id": "",
@@ -733,11 +771,12 @@ def build_copilot_cli_search_record(path: Path, stat_result=None):
 
 
 def build_vscode_chat_search_record(path: Path, stat_result=None):
+    path = canonicalize_path(path)
     st = stat_result if stat_result is not None else path.stat()
     matched_root = _match_session_root(path)
     summary = {
         "id": derive_session_id(path),
-        "path": str(path),
+        "path": session_path_key(path),
         "relative_path": to_relative_path(path),
         "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(),
         "session_id": derive_session_id(path),
@@ -830,12 +869,16 @@ def build_file_search_index_record(path: Path, stat_result=None):
 
 def sync_search_index(file_paths, prune_missing=True):
     current = {}
-    for path in file_paths:
+    for raw_path in file_paths:
+        path = canonicalize_path(raw_path)
         try:
             stat_result, signature = get_session_signature(path)
         except FileNotFoundError:
             continue
-        current[str(path)] = {
+        path_key = session_path_key(path)
+        if path_key in current:
+            continue
+        current[path_key] = {
             "kind": "file",
             "path": path,
             "stat_result": stat_result,
@@ -847,65 +890,85 @@ def sync_search_index(file_paths, prune_missing=True):
         try:
             rows = conn.execute("SELECT path, mtime_ns, size FROM session_index").fetchall()
             existing = {row["path"]: (row["mtime_ns"], row["size"]) for row in rows}
-            stale_paths = [path_key for path_key in existing if path_key not in current] if prune_missing else []
-            if stale_paths:
-                with conn:
+        finally:
+            conn.close()
+
+    stale_paths = (
+        [
+            path_key
+            for path_key in existing
+            if path_key not in current and not _path_exists_safe(canonicalize_path(path_key))
+        ]
+        if prune_missing
+        else []
+    )
+    changed = []
+    for path_key, item in current.items():
+        if existing.get(path_key) != item["signature"]:
+            changed.append(item)
+
+    changed_records = []
+    for item in changed:
+        summary, search_text = build_file_search_index_record(item["path"], stat_result=item["stat_result"])
+        changed_records.append((item["path"], item["signature"], summary, search_text))
+
+    if not stale_paths and not changed_records:
+        return
+
+    with _SEARCH_INDEX_LOCK:
+        conn = open_search_index_connection()
+        try:
+            with conn:
+                if stale_paths:
                     conn.executemany("DELETE FROM session_index WHERE path = ?", ((path_key,) for path_key in stale_paths))
                     conn.executemany("DELETE FROM session_label_links WHERE session_path = ?", ((path_key,) for path_key in stale_paths))
                     conn.executemany("DELETE FROM event_label_links WHERE session_path = ?", ((path_key,) for path_key in stale_paths))
 
-            changed = []
-            for path_key, item in current.items():
-                if existing.get(path_key) != item["signature"]:
-                    changed.append(item)
-
-            if changed:
-                with conn:
-                    for item in changed:
-                        summary, search_text = build_file_search_index_record(item["path"], stat_result=item["stat_result"])
-                        signature = item["signature"]
-                        set_cached_summary(str(item["path"]), signature, summary)
-                        conn.execute(
-                            """
-                            INSERT INTO session_index (
-                                path, id, relative_path, mtime_iso, mtime_ns, size,
-                                session_id, started_at, cwd, model, source,
-                                first_user_text, first_real_user_text, search_text
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(path) DO UPDATE SET
-                                id = excluded.id,
-                                relative_path = excluded.relative_path,
-                                mtime_iso = excluded.mtime_iso,
-                                mtime_ns = excluded.mtime_ns,
-                                size = excluded.size,
-                                session_id = excluded.session_id,
-                                started_at = excluded.started_at,
-                                cwd = excluded.cwd,
-                                model = excluded.model,
-                                source = excluded.source,
-                                first_user_text = excluded.first_user_text,
-                                first_real_user_text = excluded.first_real_user_text,
-                                search_text = excluded.search_text
-                            """,
-                            (
-                                summary["path"],
-                                summary["id"],
-                                summary["relative_path"],
-                                summary["mtime"],
-                                signature[0],
-                                signature[1],
-                                summary["session_id"],
-                                summary["started_at"],
-                                summary["cwd"],
-                                summary["model"],
-                                summary["source"],
-                                summary["first_user_text"],
-                                summary["first_real_user_text"],
-                                search_text,
-                            ),
-                        )
+                for _, signature, summary, search_text in changed_records:
+                    conn.execute(
+                        """
+                        INSERT INTO session_index (
+                            path, id, relative_path, mtime_iso, mtime_ns, size,
+                            session_id, started_at, cwd, model, source,
+                            first_user_text, first_real_user_text, search_text
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(path) DO UPDATE SET
+                            id = excluded.id,
+                            relative_path = excluded.relative_path,
+                            mtime_iso = excluded.mtime_iso,
+                            mtime_ns = excluded.mtime_ns,
+                            size = excluded.size,
+                            session_id = excluded.session_id,
+                            started_at = excluded.started_at,
+                            cwd = excluded.cwd,
+                            model = excluded.model,
+                            source = excluded.source,
+                            first_user_text = excluded.first_user_text,
+                            first_real_user_text = excluded.first_real_user_text,
+                            search_text = excluded.search_text
+                        """,
+                        (
+                            summary["path"],
+                            summary["id"],
+                            summary["relative_path"],
+                            summary["mtime"],
+                            signature[0],
+                            signature[1],
+                            summary["session_id"],
+                            summary["started_at"],
+                            summary["cwd"],
+                            summary["model"],
+                            summary["source"],
+                            summary["first_user_text"],
+                            summary["first_real_user_text"],
+                            search_text,
+                        ),
+                    )
         finally:
             conn.close()
+
+    for path, signature, summary, _ in changed_records:
+        set_cached_summary(session_path_key(path), signature, summary)
 
 
 def fetch_sessions_from_search_index(query: str, mode: str, limit: int, session_label_id=None, event_label_id=None):
@@ -921,7 +984,8 @@ def fetch_sessions_from_search_index(query: str, mode: str, limit: int, session_
             params = []
             if normalized_terms:
                 joiner = " OR " if mode == "or" else " AND "
-                where_clauses.append(joiner.join("instr(search_text, ?) > 0" for _ in normalized_terms))
+                keyword_clause = joiner.join("instr(search_text, ?) > 0" for _ in normalized_terms)
+                where_clauses.append(f"({keyword_clause})")
                 params.extend(normalized_terms)
             if session_label_id is not None:
                 where_clauses.append(
@@ -1040,7 +1104,7 @@ def delete_label(label_id):
 
 
 def fetch_session_labels_map(paths, conn):
-    unique_paths = [str(path) for path in paths if path]
+    unique_paths = [session_path_key(path) for path in paths if path]
     if not unique_paths:
         return {}
     placeholders = ", ".join("?" for _ in unique_paths)
@@ -1069,7 +1133,7 @@ def fetch_event_labels_map(session_path, conn):
         WHERE el.session_path = ?
         ORDER BY l.name COLLATE NOCASE ASC, l.id ASC
         """,
-        (str(session_path),),
+        (session_path_key(session_path),),
     ).fetchall()
     mapping = {}
     for row in rows:
@@ -1087,7 +1151,7 @@ def assign_session_label(session_path, label_id: int):
                     INSERT OR IGNORE INTO session_label_links (session_path, label_id)
                     SELECT ?, id FROM labels WHERE id = ?
                     """,
-                    (str(session_path), label_id),
+                    (session_path_key(session_path), label_id),
                 )
         finally:
             conn.close()
@@ -1100,7 +1164,7 @@ def remove_session_label(session_path, label_id: int):
             with conn:
                 conn.execute(
                     "DELETE FROM session_label_links WHERE session_path = ? AND label_id = ?",
-                    (str(session_path), label_id),
+                    (session_path_key(session_path), label_id),
                 )
         finally:
             conn.close()
@@ -1116,7 +1180,7 @@ def assign_event_label(session_path, event_id: str, label_id: int):
                     INSERT OR IGNORE INTO event_label_links (session_path, event_id, label_id)
                     SELECT ?, ?, id FROM labels WHERE id = ?
                     """,
-                    (str(session_path), event_id, label_id),
+                    (session_path_key(session_path), event_id, label_id),
                 )
         finally:
             conn.close()
@@ -1129,15 +1193,34 @@ def remove_event_label(session_path, event_id: str, label_id: int):
             with conn:
                 conn.execute(
                     "DELETE FROM event_label_links WHERE session_path = ? AND event_id = ? AND label_id = ?",
-                    (str(session_path), event_id, label_id),
+                    (session_path_key(session_path), event_id, label_id),
                 )
         finally:
             conn.close()
 
 
+def resolve_session_path(raw_path: str):
+    if not raw_path:
+        raise ValueError("path is required")
+    p = canonicalize_path(raw_path)
+    allowed = False
+    for root in get_canonical_session_roots():
+        try:
+            p.relative_to(root)
+            allowed = True
+            break
+        except Exception:
+            continue
+    if not allowed:
+        raise ValueError("path is outside sessions dir")
+    if not _path_exists_safe(p) or not p.is_file():
+        raise ValueError("session file not found")
+    return p
+
+
 def summarize_session(path: Path, stat_result=None, signature=None):
     st, sig = get_session_signature(path, stat_result, signature)
-    key = str(path)
+    key = session_path_key(path)
     with _SESSION_CACHE_LOCK:
         entry = _SESSION_CACHE.get(key)
         if entry and entry.get("signature") == sig and entry.get("summary") is not None:
@@ -1354,7 +1437,7 @@ def build_session_events(path: Path):
 
 def load_session_events(path: Path, stat_result=None, signature=None):
     _, sig = get_session_signature(path, stat_result, signature)
-    key = str(path)
+    key = session_path_key(path)
     with _SESSION_CACHE_LOCK:
         entry = _SESSION_CACHE.get(key)
         if entry and entry.get("signature") == sig and entry.get("events") is not None:
@@ -4690,22 +4773,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/session":
             q = urllib.parse.parse_qs(parsed.query)
             raw_path = q.get("path", [""])[0]
-            if not raw_path:
-                self._send_json({"error": "path is required"}, 400)
-                return
-
-            roots = [x.resolve() for x in get_session_roots()]
-            p = Path(raw_path).expanduser().resolve()
-            allowed = False
-            for root in roots:
-                try:
-                    p.relative_to(root)
-                    allowed = True
-                    break
-                except Exception:
-                    continue
-            if not allowed:
-                self._send_json({"error": "path is outside sessions dir"}, 400)
+            try:
+                p = resolve_session_path(raw_path)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
                 return
             if not p.exists() or not p.is_file():
                 self._send_json({"error": "session file not found"}, 404)
@@ -4713,7 +4784,11 @@ class Handler(BaseHTTPRequestHandler):
 
             sync_search_index([p], prune_missing=False)
             stat_result, signature = get_session_signature(p)
-            session = fetch_session_summary_from_index(str(p)) or summarize_session(p, stat_result=stat_result, signature=signature)
+            session = fetch_session_summary_from_index(session_path_key(p)) or summarize_session(
+                p,
+                stat_result=stat_result,
+                signature=signature,
+            )
             data = load_session_events(p, stat_result=stat_result, signature=signature)
             data["session"] = session
             self._send_json(data)
@@ -4723,8 +4798,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        body = parse_json_body(self)
         try:
+            body = parse_json_body(self)
             if parsed.path == "/api/labels/save":
                 label_id = parse_optional_int(body.get("id"))
                 label = save_label(label_id, body.get("name", ""), body.get("color_value", ""), body.get("color_family", ""))
@@ -4744,7 +4819,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not raw_path or label_id is None:
                     self._send_json({"error": "path and label id are required"}, 400)
                     return
-                assign_session_label(raw_path, label_id)
+                assign_session_label(resolve_session_path(raw_path), label_id)
                 self._send_json({"ok": True})
                 return
             if parsed.path == "/api/session-label/remove":
@@ -4753,7 +4828,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not raw_path or label_id is None:
                     self._send_json({"error": "path and label id are required"}, 400)
                     return
-                remove_session_label(raw_path, label_id)
+                remove_session_label(resolve_session_path(raw_path), label_id)
                 self._send_json({"ok": True})
                 return
             if parsed.path == "/api/event-label/add":
@@ -4763,7 +4838,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not raw_path or not event_id or label_id is None:
                     self._send_json({"error": "path, event id and label id are required"}, 400)
                     return
-                assign_event_label(raw_path, event_id, label_id)
+                assign_event_label(resolve_session_path(raw_path), event_id, label_id)
                 self._send_json({"ok": True})
                 return
             if parsed.path == "/api/event-label/remove":
@@ -4773,7 +4848,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not raw_path or not event_id or label_id is None:
                     self._send_json({"error": "path, event id and label id are required"}, 400)
                     return
-                remove_event_label(raw_path, event_id, label_id)
+                remove_event_label(resolve_session_path(raw_path), event_id, label_id)
                 self._send_json({"ok": True})
                 return
         except ValueError as exc:
