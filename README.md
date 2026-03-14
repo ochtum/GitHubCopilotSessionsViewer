@@ -6,7 +6,7 @@
 # GitHub Copilot Sessions Viewer
 
 Windows / WSL 上の GitHub Copilot セッションを一覧・詳細表示するローカル Viewer です。  
-GitHub Copilot CLI、VS Code 拡張のチャット履歴、補助データから生成した Cloud セッションをまとめて表示できます。
+GitHub Copilot CLI と VS Code 拡張のチャット履歴をまとめて表示できます。
 
 ## 画面構成
 
@@ -71,10 +71,8 @@ python viewer.py
 
 - `%USERPROFILE%\.copilot\session-state`（GitHub Copilot CLI）
 - `%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl`（VS Code 拡張のチャット履歴）
-- `%APPDATA%\Code\User\globalStorage\github.copilot-chat`（補助データ）
 - `~/.copilot/session-state`（WSL / Linux の GitHub Copilot CLI）
 - `~/.vscode-server/data/User/workspaceStorage`（WSL 上の VS Code Server）
-- `~/.vscode-server/data/User/globalStorage/github.copilot-chat`（WSL 上の VS Code Server 補助データ）
 - `\\wsl.localhost\<distro>\home\<user>\...`（Windows 起動時に WSL ディストリを自動検出）
 
 ## オプション
@@ -97,29 +95,47 @@ python viewer.py
 ## 画面機能
 
 - 左ペイン: セッション一覧（最新順）
-  - 一覧にセッション `source` ラベル（`CLI` / `VS Code` / `Cloud`）とセッションラベルを表示
+  - 一覧にセッション `source` ラベル（`CLI` / `VS Code`）とセッションラベルを表示
+  - 初回起動時は一覧のローディング状態を表示
   - `Reload` ボタンで一覧を再読み込み
+    - 手動 `Reload` 時は一覧の更新中オーバーレイとボタン状態を表示
   - `Clear` ボタンで左ペインの検索条件を初期化
   - `Hide` / `Show` ボタンで検索条件欄を折りたたみ / 展開可能
+  - 縦表示時はヘッダー右上の「一覧を隠す / 一覧を表示」ボタンで左ペイン全体を切り替え可能
 - 左上 filter
   - `cwd` / 日付範囲 / キーワード / `source` / セッションラベル / イベントラベルで絞り込み
   - キーワード検索は SQLite インデックスを使う全文検索
-  - `message` に加えて、`function_call.arguments` / `tool_output` / `assistant.turn_*` / `info` / `error` なども検索対象
+  - `message` に加えて、`function_call.arguments` / `tool_start.arguments` / `tool_output` / `assistant.turn_*` / `info` / `error` も検索対象
   - `cwd` / 日付範囲 / `source` / ラベル条件は常に AND 条件で評価
   - `AND/OR` 切替はキーワード欄内のみ
     - `AND`: スペース区切りキーワードをすべて含む
     - `OR`: スペース区切りキーワードのどれかを含む
 - 右ペイン: 選択セッションのイベント時系列表示
-  - 詳細ヘッダーに `source` ラベル（`CLI` / `VS Code` / `Cloud`）を表示
+  - 初回詳細読み込み時はローディング表示、手動 `Refresh` 時は詳細更新中オーバーレイを表示
+  - 詳細ヘッダーに `source` ラベル（`CLI` / `VS Code`）を表示
+  - 詳細ヘッダーは 3 段構成
+    - 1 段目: 表示フィルター群、`Refresh`、2 段目 / 3 段目をまとめて畳む `Hide` / `Show`
+    - 2 段目: コピー、ラベル追加、選択コピー関連の操作ボタン
+    - 3 段目: キーワード検索欄、`フィルター`、`検索`、`前へ`、`次へ`、`Keyword Clear`
   - 表示オプション
     - 「ユーザー指示のみ表示」
     - 「AIレスポンスのみ表示」
     - 「表示順を逆にする」
     - `event label: all` フィルタ
+  - キーワード検索
+    - `フィルター`: キーワードを含むイベントだけを表示
+    - `検索`: 一致箇所をハイライトし、`前へ` / `次へ` で候補間を移動
+    - `Keyword Clear`: 入力欄、フィルター、検索状態をまとめて解除
+    - AND / OR ではなく、入力した文字列そのままの部分一致で判定
+    - 検索対象は `message` / `function_call` / `tool_start` / `tool_output` / `info` / `error` / `assistant.turn_*`
   - `Refresh` ボタンで選択中セッションだけを再取得
   - 「セッション再開コマンドコピー」ボタンで `copilot --resume <セッションID>` をコピー
+  - 「表示中メッセージコピー」ボタンで、現在の表示フィルター結果をまとめてコピー
   - セッションラベル表示と「セッションにラベル追加」
   - イベントごとのラベル表示 / 追加 / 削除
+  - 各 `message` イベントに「コピー」ボタンを表示
+  - 「選択モード」で `message` イベントごとにチェックを付けて、「選択コピー」でまとめてコピー可能
+    - フィルター適用中でも、すでに選択済みの `message` は保持される
   - `message`（`user` / `assistant` / `system`）
   - `function_call` / `tool_start` / `tool_output`
   - `info` / `error` / `assistant.turn_*`
