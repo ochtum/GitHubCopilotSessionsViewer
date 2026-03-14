@@ -17,7 +17,7 @@ PORT = 8766
 MAX_LIST = 300
 MAX_EVENTS = 3000
 SEARCH_TEXT_LIMIT = 50000
-SEARCH_INDEX_TEXT_LIMIT = 0
+SEARCH_INDEX_TEXT_LIMIT = SEARCH_TEXT_LIMIT
 SEARCH_INDEX_SCHEMA_VERSION = 3
 SEARCH_INDEX_DB_PATH = Path(__file__).resolve().parent / ".cache" / "search_index.sqlite3"
 MAX_JSON_BODY_BYTES = 1_000_000
@@ -558,9 +558,14 @@ def open_search_index_connection():
     current_version = parse_optional_int(row["value"]) if row is not None else 0
     if current_version is None:
         current_version = 0
-    if current_version < 2:
+    migrated_session_links = []
+    migrated_event_links = []
+    if current_version < 3:
+        migrated_session_links, migrated_event_links = load_legacy_label_link_rows(conn)
         with conn:
             conn.execute("DROP TABLE IF EXISTS session_index")
+            conn.execute("DROP TABLE IF EXISTS session_label_links")
+            conn.execute("DROP TABLE IF EXISTS event_label_links")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS session_index (
@@ -614,6 +619,18 @@ def open_search_index_connection():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_session_label_links_label ON session_label_links (label_id, session_path)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_event_label_links_label ON event_label_links (label_id, session_path)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_event_label_links_session ON event_label_links (session_path, event_id)")
+    if migrated_session_links or migrated_event_links:
+        with conn:
+            if migrated_session_links:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO session_label_links (session_path, label_id) VALUES (?, ?)",
+                    migrated_session_links,
+                )
+            if migrated_event_links:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO event_label_links (session_path, event_id, label_id) VALUES (?, ?, ?)",
+                    migrated_event_links,
+                )
     if current_version != SEARCH_INDEX_SCHEMA_VERSION:
         with conn:
             conn.execute(
@@ -640,6 +657,33 @@ def summary_from_index_row(row):
         "first_user_text": row["first_user_text"],
         "first_real_user_text": row["first_real_user_text"],
     }
+
+
+def load_legacy_label_link_rows(conn):
+    session_links = set()
+    event_links = set()
+    try:
+        rows = conn.execute("SELECT session_path, label_id FROM session_label_links").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for row in rows:
+        session_path = row["session_path"] if row["session_path"] is not None else ""
+        label_id = row["label_id"]
+        if not session_path:
+            continue
+        session_links.add((session_path_key(session_path), label_id))
+    try:
+        rows = conn.execute("SELECT session_path, event_id, label_id FROM event_label_links").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for row in rows:
+        session_path = row["session_path"] if row["session_path"] is not None else ""
+        event_id = row["event_id"]
+        label_id = row["label_id"]
+        if not session_path or not event_id:
+            continue
+        event_links.add((session_path_key(session_path), event_id, label_id))
+    return sorted(session_links), sorted(event_links)
 
 
 def _search_prefix_from_summary(summary):
@@ -3575,6 +3619,7 @@ async function loadSessions(options){
         state.detailError = '';
         state.detailLoadMode = '';
         clearSelectedEventIds();
+        clearMessageRangeSelection();
         pendingAutomaticDetailSync = false;
         clearDeferredDetailSyncTimer();
         renderSessionList();
@@ -3608,6 +3653,7 @@ function saveFilters(){
     session_label_filter: getSelectedSessionLabelFilter(),
     event_label_filter: getSelectedListEventLabelFilter(),
     detail_event_label_filter: getSelectedDetailEventLabelFilter(),
+    filters_visible: filtersVisible,
     detail_actions_visible: detailActionsVisible,
     left_pane_visible: leftPaneVisible,
   };
@@ -3638,6 +3684,7 @@ function restoreFilters(){
     if(typeof data.session_label_filter === 'string') document.getElementById('session_label_filter').dataset.pendingValue = data.session_label_filter;
     if(typeof data.event_label_filter === 'string') document.getElementById('event_label_filter').dataset.pendingValue = data.event_label_filter;
     if(typeof data.detail_event_label_filter === 'string') document.getElementById('detail_event_label_filter').dataset.pendingValue = data.detail_event_label_filter;
+    if(typeof data.filters_visible === 'boolean') filtersVisible = data.filters_visible;
     if(typeof data.detail_actions_visible === 'boolean') detailActionsVisible = data.detail_actions_visible;
     if(typeof data.left_pane_visible === 'boolean') leftPaneVisible = data.left_pane_visible;
   } catch (e) {
@@ -4325,6 +4372,8 @@ document.addEventListener('click', (event) => {
   hideLabelPicker();
 });
 window.addEventListener('message', async (event) => {
+  if(event.origin !== location.origin) return;
+  if(labelManagerWindow && !labelManagerWindow.closed && event.source !== labelManagerWindow) return;
   if(!event.data || event.data.type !== 'labels-updated') return;
   await loadLabels(false);
   await loadSessions({ mode: 'labels' });
@@ -4347,6 +4396,7 @@ updateDetailKeywordControls({ total: 0 });
 updateRefreshDetailButtonState();
 updateFilterVisibility();
 restoreFilters();
+updateFilterVisibility();
 updateLeftPaneVisibility();
 updateDetailActionsVisibility();
 state.isSessionsLoading = true;
@@ -4957,7 +5007,7 @@ function hideErrorDialog(){
 
 function notifyParent(){
   if(window.opener && !window.opener.closed){
-    window.opener.postMessage({ type: 'labels-updated' }, '*');
+    window.opener.postMessage({ type: 'labels-updated' }, location.origin);
   }
 }
 

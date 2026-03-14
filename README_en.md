@@ -18,7 +18,7 @@ It can display GitHub Copilot CLI sessions and VS Code chat history in a single 
 
 ![image](/image/00002.jpg)
 
-## Directory Layout
+## Key Files
 
 ```text
 .
