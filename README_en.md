@@ -8,6 +8,9 @@
 A local viewer for browsing GitHub Copilot sessions on Windows and WSL.  
 It can display GitHub Copilot CLI sessions and VS Code chat history in a single list.
 
+- This tool supports Japanese, English, Simplified Chinese, and Traditional Chinese.
+- Feedback and feature requests are welcome via issues.
+
 ## Screen Layout
 
 ### Main Screen
@@ -152,7 +155,7 @@ python viewer.py
 
 ## Keyboard Shortcuts
 
-You can also open the shortcut dialog from the `Shortcuts` button in the upper-right header.
+Shortcuts do not run while an input is focused. Press `Esc` to close the shortcut dialog or label picker, or to leave a search field.
 
 | Key | Action |
 | --- | --- |
