@@ -1043,7 +1043,12 @@ def fetch_sessions_from_search_index(query: str, mode: str, limit: int, session_
                 )
                 params.append(event_label_id)
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-            sql = f"SELECT {columns} FROM session_index {where_sql} ORDER BY mtime_ns DESC LIMIT ?"
+            sql = (
+                f"SELECT {columns} FROM session_index {where_sql} "
+                "ORDER BY "
+                "CASE WHEN started_at IS NOT NULL AND started_at <> '' THEN started_at ELSE mtime_iso END DESC, "
+                "mtime_ns DESC LIMIT ?"
+            )
             params.append(limit)
             rows = conn.execute(sql, params).fetchall()
             sessions = [summary_from_index_row(row) for row in rows]
