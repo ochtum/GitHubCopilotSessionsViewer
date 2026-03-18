@@ -3493,7 +3493,7 @@ const I18N = {
     'meta.cwd': 'cwd',
     'meta.time': 'time',
     'meta.status': 'status',
-    'summary.sessions': 'sessions: {filtered}/{total}',
+    'summary.sessions': 'sessions: {current} / {filtered} / {total}',
     'summary.events': 'events: {visible}/{total}',
     'summary.eventsLoading': 'events: loading...',
     'summary.raw': 'raw {count}',
@@ -3648,7 +3648,7 @@ const I18N = {
     'meta.cwd': 'cwd',
     'meta.time': 'time',
     'meta.status': 'status',
-    'summary.sessions': 'sessions: {filtered}/{total}',
+    'summary.sessions': 'sessions: {current} / {filtered} / {total}',
     'summary.events': 'events: {visible}/{total}',
     'summary.eventsLoading': 'events: loading...',
     'summary.raw': 'raw {count}',
@@ -3803,7 +3803,7 @@ const I18N = {
     'meta.cwd': 'cwd',
     'meta.time': 'time',
     'meta.status': 'status',
-    'summary.sessions': 'sessions: {filtered}/{total}',
+    'summary.sessions': 'sessions: {current} / {filtered} / {total}',
     'summary.events': 'events: {visible}/{total}',
     'summary.eventsLoading': 'events: loading...',
     'summary.raw': 'raw {count}',
@@ -6308,7 +6308,9 @@ function renderSessionList(){
   const countEl = document.getElementById('session_count');
   if(countEl){
     if(state.hasLoadedSessions && state.sessions.length > 0){
-      countEl.textContent = t('summary.sessions', { filtered: state.filtered.length, total: state.sessions.length });
+      const currentIndex = state.activePath ? state.filtered.findIndex(s => s.path === state.activePath) : -1;
+      const currentLabel = currentIndex >= 0 ? String(currentIndex + 1) : '-';
+      countEl.textContent = t('summary.sessions', { current: currentLabel, filtered: state.filtered.length, total: state.sessions.length });
     } else {
       countEl.textContent = '';
     }
