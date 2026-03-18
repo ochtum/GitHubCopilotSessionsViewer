@@ -106,10 +106,12 @@ python viewer.py
   - `Hide` / `Show` collapses or expands the search filter area
   - In vertical layout, the header button `Hide List` / `Show List` can hide or show the entire left pane
 - Top-left filters
-  - Filter by `cwd` / date / keyword / `source` / session label / event label
+  - Filter by `cwd` / `Start date` / `End date` / `Event start datetime` / `Event end datetime` / keyword / `source` / session label / event label
+  - `Start date` / `End date` use native browser `date` inputs, while event datetimes use split `date + time` inputs
+  - The time field for an event datetime becomes enabled after the corresponding date is set
   - Keyword search uses a SQLite-backed search index
   - Search covers not only `message`, but also `function_call.arguments`, `tool_start.arguments`, `tool_output`, `assistant.turn_*`, `info`, and `error`
-  - `cwd`, date, `source`, and label conditions are always evaluated with AND
+  - `cwd`, datetime, `source`, and label conditions are always evaluated with AND
   - The `AND/OR` switch applies only to the keyword field
     - `AND`: must include all space-separated keywords
     - `OR`: must include at least one space-separated keyword
@@ -134,6 +136,8 @@ python viewer.py
     - `Keyword Clear`: clears the input, filter state, and search state together
     - Matching is a literal substring match, not AND / OR parsing
     - Search targets include `message`, `function_call`, `tool_start`, `tool_output`, `info`, `error`, and `assistant.turn_*`
+  - `Event start datetime` / `Event end datetime` can narrow the event timeline shown in the right pane
+  - Right-pane event datetime filters also use split `date + time` inputs, and the time field becomes enabled after a date is entered
   - `Clear` resets the detail-side display filters
   - `Refresh` reloads only the currently selected session
   - `Copy Resume Command` copies `copilot --resume <session_id>`
