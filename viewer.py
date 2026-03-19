@@ -2440,8 +2440,12 @@ header h1 {
   background: transparent;
   color: var(--danger);
   box-shadow: none;
-  cursor: not-allowed;
-  opacity: 1;
+}
+.flatpickr-extra-actions button.flatpickr-action-danger:hover:not(:disabled),
+.flatpickr-extra-actions button.flatpickr-action-danger:active:not(:disabled) {
+  color: #9f1239;
+  background: transparent;
+  transform: none;
 }
 .datetime-split > input[type="date"]:disabled {
   color: #7b8797;
@@ -3809,7 +3813,7 @@ const FP_LOCALE_MAP = {
   'zh-Hant': typeof flatpickr !== 'undefined' && flatpickr.l10ns && flatpickr.l10ns.zh_tw ? flatpickr.l10ns.zh_tw : null,
 };
 function getFpLocale(){
-  return FP_LOCALE_MAP[uiLanguage] || undefined;
+  return FP_LOCALE_MAP[uiLanguage] || 'default';
 }
 function buildFpExtraActions(opts){
   const wrap = document.createElement('div');
@@ -4434,6 +4438,8 @@ const I18N = {
     'detail.rangeBeforeActive': '起点以前のみ表示中',
     'detail.bodyExpand': '▼ 続きを表示',
     'detail.bodyCollapse': '▲ 折りたたむ',
+    'calendar.clear': '削除',
+    'calendar.today': '今日',
     'session.labels.empty': 'セッションラベルはまだありません',
     'session.labels.loading': 'セッションラベルを読み込み中...',
     'shortcut.title': 'ショートカット',
@@ -4591,6 +4597,8 @@ const I18N = {
     'detail.rangeBeforeActive': 'Showing until anchor',
     'detail.bodyExpand': '▼ Show more',
     'detail.bodyCollapse': '▲ Show less',
+    'calendar.clear': 'Clear',
+    'calendar.today': 'Today',
     'session.labels.empty': 'No session labels yet',
     'session.labels.loading': 'Loading session labels...',
     'shortcut.title': 'Shortcuts',
@@ -4748,6 +4756,8 @@ const I18N = {
     'detail.rangeBeforeActive': '正在显示锚点之前',
     'detail.bodyExpand': '▼ 展开更多',
     'detail.bodyCollapse': '▲ 收起',
+    'calendar.clear': '清除',
+    'calendar.today': '今天',
     'session.labels.empty': '还没有会话标签',
     'session.labels.loading': '正在加载会话标签...',
     'shortcut.title': '快捷键',
