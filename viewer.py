@@ -2011,8 +2011,8 @@ header h1 {
 }
 .datetime-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px;
-  gap: var(--space-3);
+  grid-template-columns: minmax(126px, 1fr) 104px;
+  gap: var(--space-2);
   align-items: center;
 }
 .datetime-split > input,
@@ -2023,20 +2023,26 @@ header h1 {
 .detail-event-date-row .datetime-split {
   width: 100%;
 }
+.detail-event-date-row .datetime-split {
+  grid-template-columns: minmax(142px, 1fr) 100px;
+}
+.detail-event-date-row .seg-date-wrap {
+  padding-right: 4px;
+}
 .seg-wrap {
   display: flex;
   align-items: center;
   border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 12px;
   background: #fff;
-  padding: 0 2px;
+  padding: 0 4px;
   height: 34px;
   min-height: 34px;
   max-height: 34px;
   box-sizing: border-box;
   position: relative;
   gap: 0;
-  overflow: visible;
+  overflow: hidden;
   font-family: var(--font-sans);
 }
 .seg-wrap:focus-within {
@@ -2878,7 +2884,7 @@ button:disabled {
   grid-column: 2;
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 20px;
   flex-wrap: wrap;
 }
 .detail-event-date-row .field {
