@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build: Debug",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/GitHubCopilotSessionsViewer.csproj",
+        "-c",
+        "Debug"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "build: Release",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/src/GitHubCopilotSessionsViewer.csproj",
+        "-c",
+        "Release"
+      ],
+      "group": "build"
+    }
+  ]
+}

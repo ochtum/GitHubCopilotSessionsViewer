@@ -487,5 +487,4 @@ $RECYCLE.BIN/
 **/obj/**
 **/bin/**
 app/
-src/
-.vscode
+
