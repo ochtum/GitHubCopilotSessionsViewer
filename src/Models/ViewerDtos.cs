@@ -31,6 +31,10 @@ public sealed record SessionSummaryDto
 
     public string Model { get; init; } = string.Empty;
 
+    public int? RequestCount { get; init; }
+
+    public int? PremiumRequestCount { get; init; }
+
     public string Source { get; init; } = string.Empty;
 
     public string FirstUserText { get; init; } = string.Empty;
@@ -95,6 +99,35 @@ public sealed class SessionDetailResponse
     public IReadOnlyList<SessionEventDto> Events { get; init; } = [];
 
     public int RawLineCount { get; init; }
+}
+
+public sealed class CostSummaryPeriodDto
+{
+    public string Key { get; init; } = string.Empty;
+
+    public int RequestCount { get; init; }
+
+    public int PremiumRequestCount { get; init; }
+
+    public decimal TotalCostUsd { get; init; }
+}
+
+public sealed class CostSummaryGroupDto
+{
+    public string Key { get; init; } = string.Empty;
+
+    public IReadOnlyList<CostSummaryPeriodDto> Periods { get; init; } = [];
+}
+
+public sealed class CostSummaryResponse
+{
+    public string GeneratedAt { get; init; } = string.Empty;
+
+    public string TimeZoneId { get; init; } = string.Empty;
+
+    public decimal UnitPriceUsd { get; init; }
+
+    public IReadOnlyList<CostSummaryGroupDto> Groups { get; init; } = [];
 }
 
 public sealed class OkResponse

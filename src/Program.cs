@@ -104,6 +104,11 @@ public class Program
             return Results.Ok(await viewer.GetLabelsAsync(cancellationToken));
         });
 
+        app.MapGet("/api/cost-summary", async (ViewerService viewer, CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await viewer.GetCostSummaryAsync(cancellationToken));
+        });
+
         app.MapGet("/api/sessions", async (HttpRequest request, ViewerService viewer, CancellationToken cancellationToken) =>
         {
             var query = request.Query;

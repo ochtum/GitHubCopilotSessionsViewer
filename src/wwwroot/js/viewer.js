@@ -24,6 +24,7 @@ const state = {
 
 const FILTER_STORAGE_KEY = 'github_copilot_sessions_viewer_filters_v1';
 const LANGUAGE_STORAGE_KEY = 'github_copilot_sessions_viewer_language_v1';
+const PREMIUM_REQUEST_UNIT_PRICE_USD = 0.04;
 const fpInstances = {};
 const segInstances = {};
 const FP_LOCALE_MAP = {
@@ -31,6 +32,12 @@ const FP_LOCALE_MAP = {
   en: null,
   'zh-Hans': typeof flatpickr !== 'undefined' && flatpickr.l10ns && flatpickr.l10ns.zh ? flatpickr.l10ns.zh : null,
   'zh-Hant': typeof flatpickr !== 'undefined' && flatpickr.l10ns && flatpickr.l10ns.zh_tw ? flatpickr.l10ns.zh_tw : null,
+};
+const NUMBER_LOCALE_MAP = {
+  ja: 'ja-JP',
+  en: 'en-US',
+  'zh-Hans': 'zh-CN',
+  'zh-Hant': 'zh-TW',
 };
 function getFpLocale(){
   return FP_LOCALE_MAP[uiLanguage] || undefined;
@@ -581,6 +588,14 @@ const I18N = {
     'header.list.hideShort': '一覧を隠す',
     'header.list.showShort': '一覧を表示',
     'header.labels': 'ラベル管理',
+    'header.costs': 'コスト表示',
+    'todayUsage.today': '今日',
+    'todayUsage.request': 'REQUEST',
+    'todayUsage.premiumRequest': 'PREMIUM REQUEST',
+    'todayUsage.totalCost': 'TOTAL COST',
+    'todayUsage.loading': '今日集計を読み込み中...',
+    'todayUsage.refreshing': '更新中...',
+    'todayUsage.error': '今日集計の取得に失敗しました。',
     'toolbar.kicker': 'Session Browser',
     'toolbar.heading': '検索と絞り込み',
     'toolbar.copy': 'フィルターは次回起動時にも保持されます。',
@@ -670,7 +685,7 @@ const I18N = {
     'shortcut.focusSearch': '検索入力欄にフォーカス',
     'shortcut.nextMatch': '詳細検索の次のヒットへ移動',
     'shortcut.prevMatch': '詳細検索の前のヒットへ移動',
-    'shortcut.meta': 'path / cwd / time のメタ表示を切り替え',
+    'shortcut.meta': 'path / cwd / time / request / premium request / model のメタ表示を切り替え',
     'shortcut.prevSession': '前のセッションを開く',
     'shortcut.nextSession': '次のセッションを開く',
     'shortcut.onlyUser': 'ユーザー指示のみ表示を切り替え',
@@ -692,6 +707,13 @@ const I18N = {
     'meta.path': 'path',
     'meta.cwd': 'cwd',
     'meta.time': 'time',
+    'meta.request': 'request',
+    'meta.premiumRequest': 'premium request',
+    'meta.premiumUnitPrice': 'unit price',
+    'meta.premiumTotalCost': 'total cost',
+    'meta.model': 'model',
+    'meta.tooltip.premiumUnitPrice': '追加購入するプレミアムリクエスト 1 件あたりの単価（USD）です。',
+    'meta.tooltip.premiumTotalCost': 'premium request 件数 × unit price で計算した概算合計金額（USD）です。',
     'meta.status': 'status',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
     'summary.events': 'events: {visible}/{total}',
@@ -742,6 +764,14 @@ const I18N = {
     'header.list.hideShort': 'Hide list',
     'header.list.showShort': 'Show list',
     'header.labels': 'Labels',
+    'header.costs': 'Costs',
+    'todayUsage.today': 'Today',
+    'todayUsage.request': 'REQUEST',
+    'todayUsage.premiumRequest': 'PREMIUM REQUEST',
+    'todayUsage.totalCost': 'TOTAL COST',
+    'todayUsage.loading': 'Loading today\'s usage...',
+    'todayUsage.refreshing': 'Refreshing...',
+    'todayUsage.error': 'Failed to load today\'s usage.',
     'toolbar.kicker': 'Session Browser',
     'toolbar.heading': 'Search and filter',
     'toolbar.copy': 'Filters are preserved the next time you launch the viewer.',
@@ -831,7 +861,7 @@ const I18N = {
     'shortcut.focusSearch': 'Focus the search input',
     'shortcut.nextMatch': 'Move to the next detail-search match',
     'shortcut.prevMatch': 'Move to the previous detail-search match',
-    'shortcut.meta': 'Toggle meta details for path / cwd / time',
+    'shortcut.meta': 'Toggle meta details for path / cwd / time / request / premium request / model',
     'shortcut.prevSession': 'Open the previous session',
     'shortcut.nextSession': 'Open the next session',
     'shortcut.onlyUser': 'Toggle only user instructions',
@@ -853,6 +883,13 @@ const I18N = {
     'meta.path': 'path',
     'meta.cwd': 'cwd',
     'meta.time': 'time',
+    'meta.request': 'request',
+    'meta.premiumRequest': 'premium request',
+    'meta.premiumUnitPrice': 'unit price',
+    'meta.premiumTotalCost': 'total cost',
+    'meta.model': 'model',
+    'meta.tooltip.premiumUnitPrice': 'USD price for one additionally purchased premium request.',
+    'meta.tooltip.premiumTotalCost': 'Estimated total in USD calculated as premium request count × unit price.',
     'meta.status': 'status',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
     'summary.events': 'events: {visible}/{total}',
@@ -903,6 +940,14 @@ const I18N = {
     'header.list.hideShort': '隐藏列表',
     'header.list.showShort': '显示列表',
     'header.labels': '标签管理',
+    'header.costs': '成本汇总',
+    'todayUsage.today': '今天',
+    'todayUsage.request': 'REQUEST',
+    'todayUsage.premiumRequest': 'PREMIUM REQUEST',
+    'todayUsage.totalCost': 'TOTAL COST',
+    'todayUsage.loading': '正在加载今日汇总...',
+    'todayUsage.refreshing': '正在刷新...',
+    'todayUsage.error': '获取今日汇总失败。',
     'toolbar.kicker': 'Session Browser',
     'toolbar.heading': '搜索与筛选',
     'toolbar.copy': '筛选条件会在下次启动时继续保留。',
@@ -992,7 +1037,7 @@ const I18N = {
     'shortcut.focusSearch': '聚焦到搜索输入框',
     'shortcut.nextMatch': '跳到详细搜索的下一个命中',
     'shortcut.prevMatch': '跳到详细搜索的上一个命中',
-    'shortcut.meta': '切换 path / cwd / time 元信息显示',
+    'shortcut.meta': '切换 path / cwd / time / request / premium request / model 元信息显示',
     'shortcut.prevSession': '打开上一个会话',
     'shortcut.nextSession': '打开下一个会话',
     'shortcut.onlyUser': '切换仅显示用户指令',
@@ -1014,6 +1059,13 @@ const I18N = {
     'meta.path': 'path',
     'meta.cwd': 'cwd',
     'meta.time': 'time',
+    'meta.request': 'request',
+    'meta.premiumRequest': 'premium request',
+    'meta.premiumUnitPrice': 'unit price',
+    'meta.premiumTotalCost': 'total cost',
+    'meta.model': 'model',
+    'meta.tooltip.premiumUnitPrice': '额外购买的单个 premium request 的单价（USD）。',
+    'meta.tooltip.premiumTotalCost': '按 premium request 数量 × unit price 计算的预估总金额（USD）。',
     'meta.status': 'status',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
     'summary.events': 'events: {visible}/{total}',
@@ -1065,6 +1117,14 @@ I18N['zh-Hant'] = {
   'header.list.hideShort': '隱藏列表',
   'header.list.showShort': '顯示列表',
   'header.labels': '標籤管理',
+  'header.costs': '成本彙總',
+  'todayUsage.today': '今天',
+  'todayUsage.request': 'REQUEST',
+  'todayUsage.premiumRequest': 'PREMIUM REQUEST',
+  'todayUsage.totalCost': 'TOTAL COST',
+  'todayUsage.loading': '正在載入今日彙總...',
+  'todayUsage.refreshing': '正在更新...',
+  'todayUsage.error': '取得今日彙總失敗。',
   'toolbar.heading': '搜尋與篩選',
   'toolbar.copy': '篩選條件會在下次啟動時繼續保留。',
   'toolbar.filters.hide': '隱藏篩選',
@@ -1287,6 +1347,8 @@ function applyMainLanguage(){
   setTextById('open_shortcuts', t('header.shortcuts'));
   document.getElementById('open_shortcuts').setAttribute('title', t('header.shortcuts'));
   setTextById('open_label_manager', t('header.labels'));
+  setTextById('open_costs', t('header.costs'));
+  renderTodayUsage();
   setText('.toolbar .section-kicker', t('toolbar.kicker'));
   setText('.toolbar .toolbar-heading', t('toolbar.heading'));
   setText('.toolbar .toolbar-copy', t('toolbar.copy'));
@@ -1439,9 +1501,11 @@ const DETAIL_INTERACTION_LOCK_MS = 4000;
 let loadSessionsTimer = null;
 let loadSessionsRequestSeq = 0;
 let loadSessionDetailRequestSeq = 0;
+let loadTodayUsageRequestSeq = 0;
 let saveFiltersFrame = 0;
 let deferredDetailSyncTimer = 0;
 let labelManagerWindow = null;
+let costsWindow = null;
 let labelPickerHandler = null;
 let filtersVisible = false;
 let detailActionsVisible = false;
@@ -1457,6 +1521,14 @@ let detailKeywordCurrentMatchIndex = -1;
 let pendingDetailKeywordFocusIndex = -1;
 let detailKeywordSearchTotal = 0;
 let pendingEventsScrollRestoreTop = null;
+const todayUsageState = {
+  hasLoaded: false,
+  isLoading: false,
+  hasError: false,
+  requestCount: 0,
+  premiumRequestCount: 0,
+  totalCostUsd: 0,
+};
 
 function esc(s){
   return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1986,6 +2058,95 @@ async function loadLabels(reloadSessions){
   }
 }
 
+function getTodayUsagePeriod(data){
+  if(!data || !Array.isArray(data.groups)){
+    return null;
+  }
+  const dayGroup = data.groups.find(group => group && group.key === 'day');
+  if(!dayGroup || !Array.isArray(dayGroup.periods)){
+    return null;
+  }
+  return dayGroup.periods.find(period => period && period.key === 'today') || null;
+}
+
+function renderTodayUsage(){
+  const host = document.getElementById('today_usage_summary');
+  if(!host){
+    return;
+  }
+
+  if(!todayUsageState.hasLoaded && todayUsageState.isLoading){
+    host.innerHTML = `<div class="today-usage-card"><span class="today-usage-title">${esc(t('todayUsage.today'))}</span><span class="today-usage-placeholder">${esc(t('todayUsage.loading'))}</span></div>`;
+    return;
+  }
+
+  if(!todayUsageState.hasLoaded){
+    const toneClass = todayUsageState.hasError ? ' error' : '';
+    const text = todayUsageState.hasError ? t('todayUsage.error') : t('todayUsage.loading');
+    host.innerHTML = `<div class="today-usage-card"><span class="today-usage-title">${esc(t('todayUsage.today'))}</span><span class="today-usage-placeholder${toneClass}">${esc(text)}</span></div>`;
+    return;
+  }
+
+  const metrics = [
+    {
+      label: t('todayUsage.request'),
+      value: formatCount(todayUsageState.requestCount),
+    },
+    {
+      label: t('todayUsage.premiumRequest'),
+      value: formatCount(todayUsageState.premiumRequestCount),
+    },
+    {
+      label: t('todayUsage.totalCost'),
+      value: formatUsd(todayUsageState.totalCostUsd),
+    },
+  ];
+
+  host.innerHTML = `<div class="today-usage-card">
+    <span class="today-usage-title">${esc(t('todayUsage.today'))}</span>
+    <div class="today-usage-items">
+      ${metrics.map(({ label, value }) => `<span class="usage-metric"><span class="meta-tag">${esc(`${label}:`)}</span><span class="header-meta-text usage-metric-value">${esc(value)}</span></span>`).join('')}
+    </div>
+  </div>`;
+}
+
+async function loadTodayUsageSummary(){
+  const requestId = ++loadTodayUsageRequestSeq;
+  todayUsageState.isLoading = true;
+  todayUsageState.hasError = false;
+  renderTodayUsage();
+
+  try {
+    const response = await fetch('/api/cost-summary?ts=' + Date.now(), { cache: 'no-store' });
+    if(!response.ok){
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    if(requestId !== loadTodayUsageRequestSeq){
+      return;
+    }
+    const today = getTodayUsagePeriod(data);
+    const requestCount = Number(today && today.request_count);
+    const premiumRequestCount = Number(today && today.premium_request_count);
+    const totalCostUsd = Number(today && today.total_cost_usd);
+    todayUsageState.requestCount = Number.isFinite(requestCount) ? requestCount : 0;
+    todayUsageState.premiumRequestCount = Number.isFinite(premiumRequestCount) ? premiumRequestCount : 0;
+    todayUsageState.totalCostUsd = Number.isFinite(totalCostUsd) ? totalCostUsd : 0;
+    todayUsageState.hasLoaded = true;
+    todayUsageState.hasError = false;
+  } catch (error) {
+    if(requestId !== loadTodayUsageRequestSeq){
+      return;
+    }
+    todayUsageState.hasError = true;
+  } finally {
+    if(requestId === loadTodayUsageRequestSeq){
+      todayUsageState.isLoading = false;
+      renderTodayUsage();
+    }
+  }
+}
+
 function openLabelManagerWindow(){
   const features = 'width=720,height=680,resizable=yes,scrollbars=yes';
   if(labelManagerWindow && !labelManagerWindow.closed){
@@ -1993,6 +2154,15 @@ function openLabelManagerWindow(){
     return;
   }
   labelManagerWindow = window.open(`/labels?lang=${encodeURIComponent(uiLanguage)}`, 'codex_label_manager', features);
+}
+
+function openCostsWindow(){
+  const features = 'width=960,height=820,resizable=yes,scrollbars=yes';
+  if(costsWindow && !costsWindow.closed){
+    costsWindow.focus();
+    return;
+  }
+  costsWindow = window.open(`/costs?lang=${encodeURIComponent(uiLanguage)}`, 'github_copilot_costs', features);
 }
 
 function highlightSessionPath(s){
@@ -2020,6 +2190,25 @@ function fmt(ts){
   if(!ts) return '';
   const d = new Date(ts);
   return isNaN(d) ? ts : d.toLocaleString();
+}
+
+function formatUsd(amount){
+  if(!Number.isFinite(amount)) return '-';
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatCount(value){
+  if(!Number.isFinite(value)) return '-';
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function toTimestamp(ts){
@@ -3937,6 +4126,17 @@ function renderActiveSession(){
   const rawSummary = t('summary.raw', {
     count: state.isDetailLoading && state.activeEvents.length === 0 ? '...' : state.activeRawLineCount,
   });
+  const requestSummary = Number.isFinite(state.activeSession.request_count)
+    ? String(state.activeSession.request_count)
+    : '-';
+  const premiumRequestSummary = Number.isFinite(state.activeSession.premium_request_count)
+    ? String(state.activeSession.premium_request_count)
+    : '-';
+  const premiumUnitPriceSummary = formatUsd(PREMIUM_REQUEST_UNIT_PRICE_USD);
+  const premiumTotalCostSummary = Number.isFinite(state.activeSession.premium_request_count)
+    ? formatUsd(state.activeSession.premium_request_count * PREMIUM_REQUEST_UNIT_PRICE_USD)
+    : '-';
+  const modelSummary = (state.activeSession.model || '').toString().trim() || '-';
   const errorNote = state.detailError
     ? `<span class="header-meta-text error">${esc(t('meta.status'))}: ${esc(state.detailError)}</span>`
     : '';
@@ -3957,6 +4157,28 @@ function renderActiveSession(){
       <span class="header-meta-text">${esc(eventsSummary)}</span>
       <span class="header-meta-text">${esc(rawSummary)}</span>
       ${errorNote}
+    </div>
+    <div class="header-meta-row">
+      <span class="header-meta-label">${esc(t('meta.request'))}</span>
+      <span class="header-meta-value">${esc(requestSummary)}</span>
+    </div>
+    <div class="header-meta-row">
+      <span class="header-meta-label">${esc(t('meta.premiumRequest'))}</span>
+      <span class="header-meta-value">${esc(premiumRequestSummary)}</span>
+      <div class="usage-meta-items">
+        <span class="usage-metric" data-tooltip="${esc(t('meta.tooltip.premiumUnitPrice'))}" tabindex="0" aria-label="${esc(`${t('meta.premiumUnitPrice')}: ${t('meta.tooltip.premiumUnitPrice')}`)}">
+          <span class="meta-tag">${esc(`${t('meta.premiumUnitPrice')}:`)}</span>
+          <span class="header-meta-text usage-metric-value">${esc(premiumUnitPriceSummary)}</span>
+        </span>
+        <span class="usage-metric" data-tooltip="${esc(t('meta.tooltip.premiumTotalCost'))}" tabindex="0" aria-label="${esc(`${t('meta.premiumTotalCost')}: ${t('meta.tooltip.premiumTotalCost')}`)}">
+          <span class="meta-tag">${esc(`${t('meta.premiumTotalCost')}:`)}</span>
+          <span class="header-meta-text usage-metric-value">${esc(premiumTotalCostSummary)}</span>
+        </span>
+      </div>
+    </div>
+    <div class="header-meta-row">
+      <span class="header-meta-label">${esc(t('meta.model'))}</span>
+      <span class="header-meta-value">${esc(modelSummary)}</span>
     </div>`;
   updateDetailMetaVisibility();
 
@@ -4082,6 +4304,7 @@ async function openSession(path, options){
 async function refreshActiveSession(){
   if(!state.activePath) return;
   await openSession(state.activePath, { mode: 'refresh' });
+  void loadTodayUsageSummary();
 }
 
 function isEditableTarget(target){
@@ -4395,6 +4618,7 @@ function initViewerPage(){
       loadSessionsTimer = null;
     }
     loadSessions({ mode: 'reload' });
+    void loadTodayUsageSummary();
   });
   safeBindById('clear', 'click', clearFilters);
   document.getElementById('only_user_instruction').addEventListener('change', () => {
@@ -4661,6 +4885,7 @@ function initViewerPage(){
     scheduleDeferredAutomaticDetailSync();
   });
   document.getElementById('open_label_manager').addEventListener('click', openLabelManagerWindow);
+  document.getElementById('open_costs').addEventListener('click', openCostsWindow);
   document.addEventListener('click', (event) => {
     const picker = document.getElementById('label_picker');
     if(picker.classList.contains('hidden')) return;
@@ -4713,9 +4938,13 @@ function initViewerPage(){
   updateDetailActionsVisibility();
   state.isSessionsLoading = true;
   renderSessionList();
+  renderTodayUsage();
   loadLabels(false)
     .catch(() => {})
-    .finally(() => loadSessions({ mode: 'initial' }));
+    .finally(() => {
+      loadSessions({ mode: 'initial' });
+      void loadTodayUsageSummary();
+    });
 }
 
 if(document.readyState === 'loading'){

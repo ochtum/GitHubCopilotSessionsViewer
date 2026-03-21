@@ -17,6 +17,7 @@ $appName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
 $launcherName = if ($Runtime -like "win-*") { "$appName.exe" } else { $appName }
 $launcherPath = Join-Path $payloadDir $launcherName
 $runCmdPath = Join-Path $outputDir "run.cmd"
+$consoleWindowTitle = "GitHubCopilotSessionsViewer"
 
 if (-not (Test-Path $projectPath)) {
     throw "Project file not found: $projectPath"
@@ -67,6 +68,7 @@ if (-not (Test-Path $launcherPath)) {
 
 @(
     '@echo off'
+    ('title {0}' -f $consoleWindowTitle)
     'setlocal'
     'pushd "%~dp0" >nul'
     ('.\payload\{0} %*' -f $launcherName)

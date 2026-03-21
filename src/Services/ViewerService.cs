@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -13,6 +14,7 @@ public sealed partial class ViewerService
     private const int MaxEvents = 2000;
     private const int SearchTextLimit = 50_000;
     private const int MaxCacheEntries = 500;
+    private const decimal PremiumRequestUnitPriceUsd = 0.04m;
     private const string EventsFileName = "events.jsonl";
     private const string WorkspaceFileName = "workspace.yaml";
     private const string VscodeMetadataFileName = "vscode.metadata.json";
@@ -92,6 +94,50 @@ public sealed partial class ViewerService
     {
         var snapshot = await _labelStore.GetSnapshotAsync(cancellationToken);
         return new LabelsResponse { Labels = snapshot.Labels };
+    }
+
+    public Task<CostSummaryResponse> GetCostSummaryAsync(CancellationToken cancellationToken = default)
+    {
+        var timeZone = TimeZoneInfo.Local;
+        var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timeZone).DateTime;
+        var groupAccumulators = BuildCostSummaryGroupDefinitions(nowLocal)
+            .Select(definition => new CostSummaryGroupAccumulator(definition))
+            .ToArray();
+
+        foreach (var eventsPath in EnumerateSessionEventFiles(GetSessionRoots()))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            IndexRecord indexRecord;
+            try
+            {
+                indexRecord = GetOrBuildIndexRecord(eventsPath);
+            }
+            catch (FileNotFoundException)
+            {
+                continue;
+            }
+
+            if (!TryGetSessionAggregateTimestamp(indexRecord.Summary, timeZone, out var localTimestamp))
+            {
+                continue;
+            }
+
+            foreach (var group in groupAccumulators)
+            {
+                group.AddSession(localTimestamp, indexRecord.Summary);
+            }
+        }
+
+        return Task.FromResult(new CostSummaryResponse
+        {
+            GeneratedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            TimeZoneId = timeZone.Id,
+            UnitPriceUsd = PremiumRequestUnitPriceUsd,
+            Groups = groupAccumulators
+                .Select(group => group.ToDto())
+                .ToArray(),
+        });
     }
 
     public async Task<SessionListResponse> GetSessionsAsync(
@@ -427,6 +473,8 @@ public sealed partial class ViewerService
             StartedAt = workspaceMeta.CreatedAt ?? string.Empty,
             Cwd = workspaceMeta.Cwd ?? string.Empty,
             Model = string.Empty,
+            RequestCount = null,
+            PremiumRequestCount = null,
             Source = hasVscodeMetadata ? "vscode" : "cli",
             FirstUserText = workspaceMeta.Summary ?? string.Empty,
             FirstRealUserText = string.Empty,
@@ -436,6 +484,7 @@ public sealed partial class ViewerService
 
         var searchChunks = new List<string>();
         var searchLength = 0;
+        var fallbackRequestCount = 0;
 
         try
         {
@@ -466,7 +515,6 @@ public sealed partial class ViewerService
                                 SessionId = GetString(data, "sessionId"),
                                 StartedAt = GetString(data, "startTime"),
                                 Cwd = GetNestedString(data, "context", "cwd"),
-                                Model = GetString(data, "copilotVersion"),
                                 Source = ClassifySource(GetString(data, "producer"), hasVscodeMetadata),
                             };
                             break;
@@ -479,6 +527,7 @@ public sealed partial class ViewerService
 
                             break;
                         case "user.message":
+                            fallbackRequestCount++;
                             searchLength = AppendSearchChunk(searchChunks, GetString(data, "content"), searchLength, SearchTextLimit);
                             summary = UpdateSummaryFromUserMessage(summary, data);
                             break;
@@ -491,9 +540,35 @@ public sealed partial class ViewerService
                                 searchLength, SearchTextLimit);
                             break;
                         case "tool.execution_complete":
+                            var toolModel = GetString(data, "model");
+                            if (!string.IsNullOrWhiteSpace(toolModel))
+                            {
+                                summary = summary with { Model = toolModel };
+                            }
+
                             if (data.TryGetProperty("result", out var result))
                             {
                                 searchLength = AppendSearchChunk(searchChunks, GetValueText(result, "content"), searchLength, SearchTextLimit);
+                            }
+
+                            break;
+                        case "session.shutdown":
+                            var currentModel = GetString(data, "currentModel");
+                            if (!string.IsNullOrWhiteSpace(currentModel))
+                            {
+                                summary = summary with { Model = currentModel };
+                            }
+
+                            var requestCount = SumModelRequestCounts(data);
+                            if (requestCount.HasValue)
+                            {
+                                summary = summary with { RequestCount = requestCount.Value };
+                            }
+
+                            var premiumRequestCount = GetNullableInt32(data, "totalPremiumRequests");
+                            if (premiumRequestCount.HasValue)
+                            {
+                                summary = summary with { PremiumRequestCount = premiumRequestCount.Value };
                             }
 
                             break;
@@ -509,6 +584,11 @@ public sealed partial class ViewerService
         if (string.IsNullOrWhiteSpace(summary.FirstRealUserText))
         {
             summary = summary with { FirstRealUserText = summary.FirstUserText };
+        }
+
+        if (!summary.RequestCount.HasValue && fallbackRequestCount > 0)
+        {
+            summary = summary with { RequestCount = fallbackRequestCount };
         }
 
         var searchPrefix = new[]
@@ -808,6 +888,87 @@ public sealed partial class ViewerService
     private static string GetSessionSortKey(SessionSummaryDto session)
     {
         return !string.IsNullOrWhiteSpace(session.StartedAt) ? session.StartedAt : session.Mtime;
+    }
+
+    private static IReadOnlyList<CostSummaryGroupDefinition> BuildCostSummaryGroupDefinitions(DateTime nowLocal)
+    {
+        var today = nowLocal.Date;
+        var thisMonthStart = new DateTime(today.Year, today.Month, 1);
+        var thisWeekStart = StartOfWeek(today, DayOfWeek.Monday);
+
+        return
+        [
+            new CostSummaryGroupDefinition(
+                "month",
+                [
+                    new CostSummaryPeriodDefinition("two_months_ago", thisMonthStart.AddMonths(-2), thisMonthStart.AddMonths(-1)),
+                    new CostSummaryPeriodDefinition("last_month", thisMonthStart.AddMonths(-1), thisMonthStart),
+                    new CostSummaryPeriodDefinition("this_month", thisMonthStart, thisMonthStart.AddMonths(1)),
+                ]),
+            new CostSummaryGroupDefinition(
+                "week",
+                [
+                    new CostSummaryPeriodDefinition("two_weeks_ago", thisWeekStart.AddDays(-14), thisWeekStart.AddDays(-7)),
+                    new CostSummaryPeriodDefinition("last_week", thisWeekStart.AddDays(-7), thisWeekStart),
+                    new CostSummaryPeriodDefinition("this_week", thisWeekStart, thisWeekStart.AddDays(7)),
+                ]),
+            new CostSummaryGroupDefinition(
+                "day",
+                [
+                    new CostSummaryPeriodDefinition("two_days_ago", today.AddDays(-2), today.AddDays(-1)),
+                    new CostSummaryPeriodDefinition("yesterday", today.AddDays(-1), today),
+                    new CostSummaryPeriodDefinition("today", today, today.AddDays(1)),
+                ]),
+        ];
+    }
+
+    private static DateTime StartOfWeek(DateTime date, DayOfWeek weekStartsOn)
+    {
+        var normalized = date.Date;
+        var diff = (7 + (normalized.DayOfWeek - weekStartsOn)) % 7;
+        return normalized.AddDays(-diff);
+    }
+
+    private static bool TryGetSessionAggregateTimestamp(SessionSummaryDto summary, TimeZoneInfo timeZone, out DateTime localTimestamp)
+    {
+        var candidate = !string.IsNullOrWhiteSpace(summary.StartedAt)
+            ? summary.StartedAt
+            : !string.IsNullOrWhiteSpace(summary.MaxEventTs)
+                ? summary.MaxEventTs
+                : summary.Mtime;
+        return TryGetLocalTimestamp(candidate, timeZone, out localTimestamp);
+    }
+
+    private static bool TryGetLocalTimestamp(string? rawTimestamp, TimeZoneInfo timeZone, out DateTime localTimestamp)
+    {
+        if (TryParseTimestamp(rawTimestamp, out var parsed))
+        {
+            localTimestamp = TimeZoneInfo.ConvertTime(parsed, timeZone).DateTime;
+            return true;
+        }
+
+        localTimestamp = default;
+        return false;
+    }
+
+    private static bool TryParseTimestamp(string? rawTimestamp, out DateTimeOffset parsed)
+    {
+        if (string.IsNullOrWhiteSpace(rawTimestamp))
+        {
+            parsed = default;
+            return false;
+        }
+
+        return DateTimeOffset.TryParse(
+                rawTimestamp,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal,
+                out parsed)
+            || DateTimeOffset.TryParse(
+                rawTimestamp,
+                CultureInfo.CurrentCulture,
+                DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal,
+                out parsed);
     }
 
     private static SessionSummaryDto WithSessionLabels(SessionSummaryDto session, IReadOnlyList<int> labelIds, IReadOnlyList<LabelDto> labels)
@@ -1318,6 +1479,65 @@ public sealed partial class ViewerService
         };
     }
 
+    private static int? SumModelRequestCounts(JsonElement element)
+    {
+        if (!element.TryGetProperty("modelMetrics", out var modelMetrics) || modelMetrics.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var total = 0;
+        var found = false;
+        foreach (var metric in modelMetrics.EnumerateObject())
+        {
+            if (metric.Value.ValueKind != JsonValueKind.Object
+                || !metric.Value.TryGetProperty("requests", out var requests)
+                || requests.ValueKind != JsonValueKind.Object
+                || !requests.TryGetProperty("count", out var countProperty))
+            {
+                continue;
+            }
+
+            int count;
+            if (countProperty.ValueKind == JsonValueKind.Number && countProperty.TryGetInt32(out count))
+            {
+                total += count;
+                found = true;
+                continue;
+            }
+
+            if (countProperty.ValueKind == JsonValueKind.String
+                && int.TryParse(countProperty.GetString(), out count))
+            {
+                total += count;
+                found = true;
+            }
+        }
+
+        return found ? total : null;
+    }
+
+    private static int? GetNullableInt32(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var numericValue))
+        {
+            return numericValue;
+        }
+
+        if (property.ValueKind == JsonValueKind.String
+            && int.TryParse(property.GetString(), out var stringValue))
+        {
+            return stringValue;
+        }
+
+        return null;
+    }
+
     private static SessionSignature GetSignature(FileInfo fileInfo)
     {
         return new SessionSignature(fileInfo.LastWriteTimeUtc.Ticks, fileInfo.Length);
@@ -1438,6 +1658,91 @@ public sealed partial class ViewerService
     private sealed record EventsData(IReadOnlyList<SessionEventDto> Events, int RawLineCount);
 
     private readonly record struct SessionSignature(long LastWriteTicks, long Size);
+
+    private sealed record CostSummaryPeriodDefinition(
+        string Key,
+        DateTime StartLocal,
+        DateTime EndLocal);
+
+    private sealed record CostSummaryGroupDefinition(
+        string Key,
+        IReadOnlyList<CostSummaryPeriodDefinition> Periods);
+
+    private sealed class CostSummaryGroupAccumulator
+    {
+        private readonly CostSummaryGroupDefinition _definition;
+        private readonly CostSummaryBucketAccumulator[] _periods;
+
+        public CostSummaryGroupAccumulator(CostSummaryGroupDefinition definition)
+        {
+            _definition = definition;
+            _periods = definition.Periods
+                .Select(_ => new CostSummaryBucketAccumulator())
+                .ToArray();
+        }
+
+        public void AddSession(DateTime localTimestamp, SessionSummaryDto summary)
+        {
+            if (TryGetPeriodIndex(localTimestamp, out var index))
+            {
+                _periods[index].Add(summary);
+            }
+        }
+
+        public CostSummaryGroupDto ToDto()
+        {
+            return new CostSummaryGroupDto
+            {
+                Key = _definition.Key,
+                Periods = _definition.Periods
+                    .Select((period, index) => _periods[index].ToDto(period.Key))
+                    .ToArray(),
+            };
+        }
+
+        private bool TryGetPeriodIndex(DateTime localTimestamp, out int index)
+        {
+            for (var i = 0; i < _definition.Periods.Count; i++)
+            {
+                var period = _definition.Periods[i];
+                if (localTimestamp >= period.StartLocal && localTimestamp < period.EndLocal)
+                {
+                    index = i;
+                    return true;
+                }
+            }
+
+            index = -1;
+            return false;
+        }
+    }
+
+    private sealed class CostSummaryBucketAccumulator
+    {
+        private int _requestCount;
+        private int _premiumRequestCount;
+        private decimal _totalCostUsd;
+
+        public void Add(SessionSummaryDto summary)
+        {
+            _requestCount += summary.RequestCount ?? 0;
+
+            var premiumRequestCount = summary.PremiumRequestCount ?? 0;
+            _premiumRequestCount += premiumRequestCount;
+            _totalCostUsd += premiumRequestCount * PremiumRequestUnitPriceUsd;
+        }
+
+        public CostSummaryPeriodDto ToDto(string key)
+        {
+            return new CostSummaryPeriodDto
+            {
+                Key = key,
+                RequestCount = _requestCount,
+                PremiumRequestCount = _premiumRequestCount,
+                TotalCostUsd = _totalCostUsd,
+            };
+        }
+    }
 
     private sealed class WorkspaceMeta
     {
