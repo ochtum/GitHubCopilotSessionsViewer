@@ -58,23 +58,6 @@ Download the `app-framework-dependent` folder from Releases, extract it, and run
 - `~/.vscode-server/data/User/workspaceStorage` (VS Code Server on WSL)
 - `\\wsl.localhost\<distro>\home\<user>\...` (auto-detected when launched on Windows)
 
-## Options
-
-To use a custom session directory, set `SESSIONS_DIR`.  
-You can also override with `COPILOT_SESSIONS_DIR`. Multiple paths are separated by `os.pathsep` (`;` on Windows, `:` on Unix/WSL).
-
-```powershell
-$env:SESSIONS_DIR = 'C:\path\to\session-state'
-python viewer.py
-```
-
-To change the listen address, set `HOST`.
-
-```powershell
-$env:HOST = '0.0.0.0'
-python viewer.py
-```
-
 ## UI Features
 
 - Left pane: session list (newest first)
@@ -140,39 +123,37 @@ python viewer.py
 
 Shortcuts are disabled while an input field is focused. Press `Esc` to close the shortcut list or label picker, or to remove focus from a search field.
 
-| Key         | Action                                                                        |
-| ----------- | ----------------------------------------------------------------------------- |
-| `F5`        | Refresh the current list or session detail                                    |
-| `Shift + F` | Toggle the left-pane filter visibility                                        |
-| `Shift + L` | Run `Clear` on the left pane                                                  |
-| `/`         | Focus the search input field                                                  |
-| `N`         | Move to the next detail-search match                                          |
-| `P`         | Move to the previous detail-search match                                      |
-| `M`         | Toggle the `path / cwd / time` meta display                                   |
-| `[`         | Open the previous session                                                     |
-| `]`         | Open the next session                                                         |
-| `1`         | Toggle "Show only user instructions"                                          |
-| `2`         | Toggle "Show only AI responses"                                               |
-| `3`         | Toggle "Show only each input and final response"                              |
-| `4`         | Toggle "Reverse display order"                                                |
-| `Shift + D` | Clear right-pane display conditions and operation states                       |
-| `Shift + T` | Toggle detail actions visibility                                              |
-| `Shift + R` | Copy the session resume command (`copilot --resume <session_id>`)             |
-| `Shift + C` | Copy displayed messages                                                       |
-| `Shift + S` | Toggle selection mode                                                         |
-| `Shift + X` | Copy selected messages                                                        |
-| `Shift + G` | Toggle anchor selection mode                                                  |
-| `Shift + H` | Clear the anchor                                                              |
-| `,`         | Show only messages before the anchor                                          |
-| `.`         | Show only messages after the anchor                                           |
-| `Esc`       | Close the shortcut list or label picker, and remove focus from search fields  |
+| Key         | Action                                                                       |
+| ----------- | ---------------------------------------------------------------------------- |
+| `F5`        | Refresh the current list or session detail                                   |
+| `Shift + F` | Toggle the left-pane filter visibility                                       |
+| `Shift + L` | Run `Clear` on the left pane                                                 |
+| `/`         | Focus the search input field                                                 |
+| `N`         | Move to the next detail-search match                                         |
+| `P`         | Move to the previous detail-search match                                     |
+| `M`         | Toggle the `path / cwd / time` meta display                                  |
+| `[`         | Open the previous session                                                    |
+| `]`         | Open the next session                                                        |
+| `1`         | Toggle "Show only user instructions"                                         |
+| `2`         | Toggle "Show only AI responses"                                              |
+| `3`         | Toggle "Show only each input and final response"                             |
+| `4`         | Toggle "Reverse display order"                                               |
+| `Shift + D` | Clear right-pane display conditions and operation states                     |
+| `Shift + T` | Toggle detail actions visibility                                             |
+| `Shift + R` | Copy the session resume command (`copilot --resume <session_id>`)            |
+| `Shift + C` | Copy displayed messages                                                      |
+| `Shift + S` | Toggle selection mode                                                        |
+| `Shift + X` | Copy selected messages                                                       |
+| `Shift + G` | Toggle anchor selection mode                                                 |
+| `Shift + H` | Clear the anchor                                                             |
+| `,`         | Show only messages before the anchor                                         |
+| `.`         | Show only messages after the anchor                                          |
+| `Esc`       | Close the shortcut list or label picker, and remove focus from search fields |
 
 ## Notes
 
-- The search index is stored in `.cache/search_index.sqlite3`; only changed sessions are incrementally re-indexed.
-- On Windows, `viewer.py` runs `wsl.exe -l -q` to enumerate WSL distros and scans Copilot / VS Code Server session data under each distro's home directory.
-- To limit which distros are auto-detected, set `COPILOT_WSL_DISTROS` (e.g., `Ubuntu;Debian`).
-- To handle large logs, the list is capped at 300 sessions and the detail view at 3,000 events.
+- On Windows, `wsl.exe -l -q` is used to enumerate WSL distros and scan Copilot / VS Code Server session data under each distro's home directory.
+- To handle large logs, the list is capped at 300 sessions and the detail view at 2,000 events.
 - The viewer listens on localhost only (`127.0.0.1`) by default.
 
 ## File Structure
