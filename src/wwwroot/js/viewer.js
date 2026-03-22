@@ -658,6 +658,7 @@ const I18N = {
     'detail.toggle.ai': 'AIレスポンスのみ表示',
     'detail.toggle.turn': '各入力と最終応答のみ',
     'detail.toggle.reverse': '表示順を逆にする',
+    'detail.toggle.selectedOnly': '選択イベントのみ表示',
     'detail.label': 'ラベルフィルター',
     'detail.label.all': 'all',
     'detail.refresh': 'Refresh',
@@ -854,6 +855,7 @@ const I18N = {
     'detail.toggle.ai': 'Only AI responses',
     'detail.toggle.turn': 'Only each input and final reply',
     'detail.toggle.reverse': 'Reverse order',
+    'detail.toggle.selectedOnly': 'Selected events only',
     'detail.label': 'Label filter',
     'detail.label.all': 'all',
     'detail.refresh': 'Refresh',
@@ -1050,6 +1052,7 @@ const I18N = {
     'detail.toggle.ai': '仅显示 AI 回复',
     'detail.toggle.turn': '仅显示每次输入与最终回复',
     'detail.toggle.reverse': '反转显示顺序',
+    'detail.toggle.selectedOnly': '仅显示已选事件',
     'detail.label': '标签筛选',
     'detail.label.all': 'all',
     'detail.refresh': 'Refresh',
@@ -1222,6 +1225,7 @@ I18N['zh-Hant'] = {
   'detail.toggle.ai': '僅顯示 AI 回覆',
   'detail.toggle.turn': '僅顯示每次輸入與最終回覆',
   'detail.toggle.reverse': '反轉顯示順序',
+  'detail.toggle.selectedOnly': '僅顯示已選事件',
   'detail.label': '標籤篩選',
   'detail.label.all': 'all',
   'detail.refresh': '刷新',
@@ -1461,9 +1465,13 @@ function applyMainLanguage(){
   setToggleLabel('turn_boundary_only', t('detail.toggle.turn'));
   document.getElementById('turn_boundary_only').closest('label').setAttribute('title', '3');
   setToggleLabel('reverse_order', t('detail.toggle.reverse'));
+  setToggleLabel('selected_events_only', t('detail.toggle.selectedOnly'));
   setFieldLabel('detail_event_label_filter', t('detail.label'));
   document.getElementById('detail_event_label_filter').setAttribute('title', t('detail.label'));
   setTextById('clear_detail', t('detail.clear'));
+  setTextById('toggle_detail_actions', t('detail.actions'));
+  setTextById('toggle_detail_search', t('detail.search'));
+  setTextById('toggle_detail_range', t('detail.range'));
   setText('.detail-toolbar-row.secondary .detail-group-title', t('detail.actions'));
   setTextById('copy_resume_command', t('detail.copyResume'));
   setTextById('add_session_label', t('detail.addSessionLabel'));
@@ -1582,12 +1590,14 @@ let labelManagerWindow = null;
 let costsWindow = null;
 let labelPickerHandler = null;
 let filtersVisible = false;
-let detailActionsVisible = false;
+let detailPanelSection = '';
 let detailMetaVisible = false;
 let leftPaneVisible = true;
 let pendingAutomaticDetailSync = false;
 let detailPointerDown = false;
 let detailInteractionLockUntil = 0;
+let compactUiActive = false;
+let compactUiSnapshot = null;
 const detailExpandedEventKeysByPath = new Map();
 let detailKeywordFilterTerm = '';
 let detailKeywordSearchTerm = '';
@@ -1644,7 +1654,7 @@ function updateReloadButtonState(){
   if(!button){
     return;
   }
-  const isManualReload = state.isSessionsLoading && state.sessionsLoadMode === 'reload';
+  const isManualReload = state.isSessionsLoading && (state.sessionsLoadMode === 'reload' || state.sessionsLoadMode === 'reload_refresh');
   button.disabled = isManualReload;
   button.textContent = isManualReload ? 'Reloading...' : 'Reload';
 }
@@ -1663,6 +1673,10 @@ function updateFilterVisibility(){
 
 function normalizeLeftPaneTab(value){
   return value === 'labels' ? 'labels' : 'sessions';
+}
+
+function normalizeDetailPanelSection(value){
+  return value === 'actions' || value === 'search' || value === 'range' ? value : '';
 }
 
 function renderLeftPaneTabs(){
@@ -1711,20 +1725,70 @@ function updateDetailActionsVisibility(){
   const actionRow = document.getElementById('detail_action_row');
   const keywordRow = document.getElementById('detail_keyword_row');
   const messageRangeRow = document.getElementById('detail_message_range_row');
-  const button = document.getElementById('toggle_detail_actions');
-  if(!actionRow || !keywordRow || !messageRangeRow || !button){
+  if(!actionRow || !keywordRow || !messageRangeRow){
     return;
   }
-  actionRow.classList.toggle('hidden', !detailActionsVisible);
-  keywordRow.classList.toggle('hidden', !detailActionsVisible);
-  messageRangeRow.classList.toggle('hidden', !detailActionsVisible);
-  button.textContent = detailActionsVisible ? t('detail.actions.hide') : t('detail.actions.show');
+  const activeSection = normalizeDetailPanelSection(detailPanelSection);
+  detailPanelSection = activeSection;
+  actionRow.classList.toggle('hidden', activeSection !== 'actions');
+  keywordRow.classList.toggle('hidden', activeSection !== 'search');
+  messageRangeRow.classList.toggle('hidden', activeSection !== 'range');
+  [
+    ['toggle_detail_actions', 'actions', t('detail.actions')],
+    ['toggle_detail_search', 'search', t('detail.search')],
+    ['toggle_detail_range', 'range', t('detail.range')],
+  ].forEach(([id, section, label]) => {
+    const button = document.getElementById(id);
+    if(!button){
+      return;
+    }
+    const isActive = activeSection === section;
+    button.textContent = label;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function setActiveDetailPanelSection(nextSection, options){
+  detailPanelSection = normalizeDetailPanelSection(nextSection);
+  updateDetailActionsVisibility();
+  if(options && options.skipSave){
+    return;
+  }
+  saveFiltersSoon();
 }
 
 function setDetailActionsVisible(nextVisible){
-  detailActionsVisible = !!nextVisible;
-  updateDetailActionsVisibility();
-  saveFiltersSoon();
+  setActiveDetailPanelSection(nextVisible ? 'actions' : '');
+}
+
+function toggleDetailPanelSection(section){
+  const normalized = normalizeDetailPanelSection(section);
+  const nextSection = detailPanelSection === normalized ? '' : normalized;
+  setActiveDetailPanelSection(nextSection);
+}
+
+function updateCompactUiMode(){
+  const nextCompact = window.innerHeight <= 900;
+  const changed = nextCompact !== compactUiActive;
+  compactUiActive = nextCompact;
+  document.documentElement.classList.toggle('compact-ui', compactUiActive);
+  if(changed && compactUiActive){
+    compactUiSnapshot = {
+      filtersVisible,
+      detailPanelSection: normalizeDetailPanelSection(detailPanelSection),
+    };
+    filtersVisible = false;
+    updateFilterVisibility();
+    detailPanelSection = '';
+    updateDetailActionsVisibility();
+  } else if(changed && !compactUiActive && compactUiSnapshot){
+    filtersVisible = !!compactUiSnapshot.filtersVisible;
+    updateFilterVisibility();
+    detailPanelSection = normalizeDetailPanelSection(compactUiSnapshot.detailPanelSection);
+    updateDetailActionsVisibility();
+    compactUiSnapshot = null;
+  }
 }
 
 function updateDetailMetaVisibility(){
@@ -1813,6 +1877,11 @@ function getSelectedDetailEventLabelFilter(){
 
 function isTurnBoundaryFilterEnabled(){
   const checkbox = document.getElementById('turn_boundary_only');
+  return !!(checkbox && checkbox.checked);
+}
+
+function isSelectedEventsOnlyFilterEnabled(){
+  const checkbox = document.getElementById('selected_events_only');
   return !!(checkbox && checkbox.checked);
 }
 
@@ -3358,11 +3427,21 @@ function getSelectedMessageRangeEvent(){
 
 function clearSelectedEventIds(){
   state.selectedEventIds = new Set();
+  const checkbox = document.getElementById('selected_events_only');
+  if(checkbox){
+    checkbox.checked = false;
+  }
 }
 
 function syncSelectedEventIdsToActiveEvents(){
   const validIds = new Set((state.activeEvents || []).filter(isSelectableMessageEvent).map(getEventSelectionKey));
   state.selectedEventIds = new Set(Array.from(state.selectedEventIds || []).filter(id => validIds.has(id)));
+  if(state.selectedEventIds.size === 0){
+    const checkbox = document.getElementById('selected_events_only');
+    if(checkbox){
+      checkbox.checked = false;
+    }
+  }
 }
 
 function clearMessageRangeSelection(){
@@ -3407,6 +3486,25 @@ function updateEventSelectionModeButtonState(){
   button.disabled = !state.activeSession || (!hasSelectableMessages && !hasSelectedMessages && !state.isEventSelectionMode);
   button.textContent = state.isEventSelectionMode ? t('detail.selectEnd') : t('detail.selectMode');
   button.classList.toggle('selection-active', state.isEventSelectionMode);
+}
+
+function updateSelectedEventsOnlyToggleState(){
+  const input = document.getElementById('selected_events_only');
+  const label = input ? input.closest('.toggle-chip') : null;
+  if(!input){
+    return;
+  }
+  const hasActiveSession = !!state.activeSession;
+  const hasSelectedMessages = !!getSelectedMessageEvents().length;
+  const enabled = hasActiveSession && hasSelectedMessages;
+  if(!enabled && input.checked){
+    input.checked = false;
+  }
+  input.disabled = !enabled;
+  if(label){
+    label.classList.toggle('disabled', !enabled);
+    label.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  }
 }
 
 function updateCopySelectedMessagesButtonState(){
@@ -3481,6 +3579,7 @@ function hasDetailFilter(){
     document.getElementById('only_user_instruction').checked ||
     document.getElementById('only_ai_response').checked ||
     document.getElementById('turn_boundary_only').checked ||
+    document.getElementById('selected_events_only').checked ||
     document.getElementById('reverse_order').checked ||
     getSelectedDetailEventLabelFilter() ||
     state.detailMessageRangeMode ||
@@ -3708,10 +3807,6 @@ function saveFilters(){
   const detailEventDateFromTime = parseTimeInputToValue(document.getElementById('detail_event_date_from_time').value);
   const detailEventDateToDate = parseDateInputToIso(getFpDateValue('detail_event_date_to_date'));
   const detailEventDateToTime = parseTimeInputToValue(document.getElementById('detail_event_date_to_time').value);
-  const eventDateFromIso = buildDateTimeIsoFromParts(eventDateFromDate, eventDateFromTime, 'start');
-  const eventDateToIso = buildDateTimeIsoFromParts(eventDateToDate, eventDateToTime, 'end');
-  const detailEventDateFromIso = buildDateTimeIsoFromParts(detailEventDateFromDate, detailEventDateFromTime, 'start');
-  const detailEventDateToIso = buildDateTimeIsoFromParts(detailEventDateToDate, detailEventDateToTime, 'end');
   refreshDateTimeInputPairStates();
   const payload = {
     cwd_q: document.getElementById('cwd_q').value,
@@ -3729,10 +3824,10 @@ function saveFilters(){
     event_label_filter: getSelectedListEventLabelFilter(),
     detail_event_label_filter: getSelectedDetailEventLabelFilter(),
     filters_visible: filtersVisible,
-    detail_actions_visible: detailActionsVisible,
+    detail_panel_section: normalizeDetailPanelSection(detailPanelSection),
     left_pane_visible: leftPaneVisible,
     left_pane_tab: state.leftPaneTab,
-    panel_defaults_v: 2,
+    panel_defaults_v: 3,
   };
   try {
     localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(payload));
@@ -3775,7 +3870,11 @@ function restoreFilters(){
     refreshDateTimeInputPairStates();
     if(data.panel_defaults_v >= 2){
       if(typeof data.filters_visible === 'boolean') filtersVisible = data.filters_visible;
-      if(typeof data.detail_actions_visible === 'boolean') detailActionsVisible = data.detail_actions_visible;
+      if(data.panel_defaults_v >= 3 && typeof data.detail_panel_section === 'string'){
+        detailPanelSection = normalizeDetailPanelSection(data.detail_panel_section);
+      } else if(typeof data.detail_actions_visible === 'boolean' && data.detail_actions_visible){
+        detailPanelSection = 'actions';
+      }
     }
     if(typeof data.left_pane_visible === 'boolean') leftPaneVisible = data.left_pane_visible;
     if(typeof data.left_pane_tab === 'string') state.leftPaneTab = normalizeLeftPaneTab(data.left_pane_tab);
@@ -3998,7 +4097,7 @@ function renderSessionList(){
   } else {
     box.innerHTML = state.filtered.map(s => renderSessionCard(s, { active: state.activePath === s.path })).join('');
   }
-  if(state.isSessionsLoading && state.hasLoadedSessions && (state.sessionsLoadMode === 'reload' || state.sessionsLoadMode === 'auto' || state.sessionsLoadMode === 'clear')){
+  if(state.isSessionsLoading && state.hasLoadedSessions && (state.sessionsLoadMode === 'reload' || state.sessionsLoadMode === 'reload_refresh' || state.sessionsLoadMode === 'auto' || state.sessionsLoadMode === 'clear')){
     setStatusLayer(
       'sessions_status',
       t('status.sessions.refreshTitle'),
@@ -4148,6 +4247,20 @@ function applyDetailMessageRangeFilter(events, rawIndexByEvent){
   });
 }
 
+function applySelectedEventsOnlyFilter(events){
+  if(!isSelectedEventsOnlyFilterEnabled()){
+    return events;
+  }
+  const selectedIds = state.selectedEventIds || new Set();
+  if(!selectedIds.size){
+    return [];
+  }
+  return events.filter(ev => {
+    const key = getEventSelectionKey(ev);
+    return !!key && selectedIds.has(key);
+  });
+}
+
 function filterEventsByDetailKeywordTerm(events){
   if(detailKeywordFilterTerm === ''){
     return events;
@@ -4186,6 +4299,7 @@ function applyDetailVisibilityFilters(events, rawIndexByEvent){
   if(selectedEventLabelId){
     filteredEvents = filteredEvents.filter(ev => (ev.labels || []).some(label => String(label.id) === selectedEventLabelId));
   }
+  filteredEvents = applySelectedEventsOnlyFilter(filteredEvents);
   filteredEvents = applyDetailMessageDisplayFilters(filteredEvents);
   filteredEvents = applyDetailMessageRangeFilter(filteredEvents, rawIndexByEvent);
   filteredEvents = filterEventsByDetailKeywordTerm(filteredEvents);
@@ -4325,6 +4439,7 @@ function toggleEventSelectionMode(){
   state.isEventSelectionMode = nextEnabled;
   if(nextEnabled){
     state.isMessageRangeSelectionMode = false;
+    setActiveDetailPanelSection('range', { skipSave: true });
   } else {
     clearSelectedEventIds();
   }
@@ -4344,7 +4459,14 @@ function updateEventSelection(eventId, checked, card){
   if(card){
     card.classList.toggle('copy-selected', checked);
   }
+  if(isSelectedEventsOnlyFilterEnabled() || state.selectedEventIds.size === 0){
+    const eventsBox = document.getElementById('events');
+    pendingEventsScrollRestoreTop = eventsBox ? eventsBox.scrollTop : null;
+    renderActiveSession();
+    return;
+  }
   updateCopySelectedMessagesButtonState();
+  updateSelectedEventsOnlyToggleState();
   updateClearDetailButtonState();
 }
 
@@ -4354,6 +4476,7 @@ function toggleMessageRangeSelectionMode(){
   if(nextEnabled){
     state.isEventSelectionMode = false;
     clearSelectedEventIds();
+    setActiveDetailPanelSection('range', { skipSave: true });
   }
   renderActiveSession();
 }
@@ -4447,6 +4570,7 @@ function clearDetailFilters(){
   document.getElementById('only_user_instruction').checked = false;
   document.getElementById('only_ai_response').checked = false;
   document.getElementById('turn_boundary_only').checked = false;
+  document.getElementById('selected_events_only').checked = false;
   document.getElementById('reverse_order').checked = false;
   const detailEventLabelFilter = document.getElementById('detail_event_label_filter');
   detailEventLabelFilter.value = '';
@@ -4506,6 +4630,7 @@ function renderActiveSession(){
     updateCopyResumeButtonState();
     updateDisplayedMessagesCopyButtonState();
     updateEventSelectionModeButtonState();
+    updateSelectedEventsOnlyToggleState();
     updateCopySelectedMessagesButtonState();
     updateMessageRangeSelectionModeButtonState();
     updateClearMessageRangeSelectionButtonState();
@@ -4725,8 +4850,8 @@ function isEditableTarget(target){
 
 function focusShortcutSearch(){
   if(state.activeSession){
-    if(!detailActionsVisible){
-      setDetailActionsVisible(true);
+    if(detailPanelSection !== 'search'){
+      setActiveDetailPanelSection('search', { skipSave: true });
     }
     const input = document.getElementById('detail_keyword_q');
     if(input && !input.disabled){
@@ -4846,22 +4971,26 @@ function triggerCheckboxShortcut(id){
   return true;
 }
 
-function triggerViewerRefresh(){
-  if(state.activePath){
-    refreshActiveSession();
-    return;
-  }
+async function triggerViewerRefresh(){
   if(loadSessionsTimer){
     clearTimeout(loadSessionsTimer);
     loadSessionsTimer = null;
   }
   if(state.leftPaneTab === 'labels'){
-    void loadLabels(false)
-      .then(() => loadLabeledItems({ mode: 'reload' }))
-      .then(() => loadTodayUsageSummary());
+    await loadLabels(false);
+    await loadLabeledItems({ mode: 'reload' });
+    if(state.activePath){
+      await openSession(state.activePath, { mode: 'refresh' });
+    }
+    await loadTodayUsageSummary();
     return;
   }
-  void loadSessions({ mode: 'reload' }).then(() => loadTodayUsageSummary());
+  const loadMode = state.activePath ? 'reload_refresh' : 'reload';
+  await loadSessions({ mode: loadMode });
+  if(loadMode === 'reload_refresh' && state.activePath){
+    await openSession(state.activePath, { mode: 'refresh' });
+  }
+  await loadTodayUsageSummary();
 }
 
 function moveDetailKeywordSearchByShortcut(step){
@@ -5029,7 +5158,13 @@ function initViewerPage(){
     setLeftPaneVisible(!leftPaneVisible);
   });
   safeBindById('toggle_detail_actions', 'click', () => {
-    setDetailActionsVisible(!detailActionsVisible);
+    toggleDetailPanelSection('actions');
+  });
+  safeBindById('toggle_detail_search', 'click', () => {
+    toggleDetailPanelSection('search');
+  });
+  safeBindById('toggle_detail_range', 'click', () => {
+    toggleDetailPanelSection('range');
   });
   safeBindById('open_shortcuts', 'click', openShortcutDialog);
   safeBindById('close_shortcuts', 'click', closeShortcutDialog);
@@ -5047,6 +5182,9 @@ function initViewerPage(){
     renderActiveSession();
   });
   document.getElementById('turn_boundary_only').addEventListener('change', () => {
+    renderActiveSession();
+  });
+  document.getElementById('selected_events_only').addEventListener('change', () => {
     renderActiveSession();
   });
   document.getElementById('reverse_order').addEventListener('change', () => {
@@ -5346,6 +5484,7 @@ function initViewerPage(){
     }
   });
   window.addEventListener('resize', () => {
+    updateCompactUiMode();
     updateLeftPaneVisibility();
   });
   updateCopyResumeButtonState();
@@ -5363,6 +5502,7 @@ function initViewerPage(){
   initAllFlatpickr();
   setUiLanguage(getRequestedLanguage(), false);
   updateFilterVisibility();
+  updateCompactUiMode();
   updateDetailMetaVisibility();
   updateLeftPaneVisibility();
   renderLeftPaneTabs();
