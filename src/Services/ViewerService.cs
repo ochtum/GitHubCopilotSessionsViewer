@@ -96,6 +96,65 @@ public sealed partial class ViewerService
         return new LabelsResponse { Labels = snapshot.Labels };
     }
 
+    public async Task<LabeledItemsResponse> GetLabeledItemsAsync(CancellationToken cancellationToken = default)
+    {
+        var snapshot = await _labelStore.GetSnapshotAsync(cancellationToken);
+        var labeledSessions = new List<SessionSummaryDto>();
+        var labeledEvents = new List<LabeledEventListItemDto>();
+
+        foreach (var eventsPath in EnumerateSessionEventFiles(GetSessionRoots()))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            IndexRecord record;
+            try
+            {
+                record = GetOrBuildIndexRecord(eventsPath);
+            }
+            catch (FileNotFoundException)
+            {
+                continue;
+            }
+
+            var sessionPath = record.Summary.Path;
+            if (snapshot.SessionLabels.TryGetValue(sessionPath, out var sessionLabelIds))
+            {
+                var labels = ResolveLabels(sessionLabelIds, snapshot.LabelById);
+                if (labels.Count > 0)
+                {
+                    labeledSessions.Add(WithSessionLabels(record.Summary, sessionLabelIds, labels));
+                }
+            }
+
+            if (snapshot.EventLabels.TryGetValue(sessionPath, out var labelsByEventId) && labelsByEventId.Count > 0)
+            {
+                EventsData eventsData;
+                try
+                {
+                    eventsData = GetOrBuildEvents(eventsPath);
+                }
+                catch (FileNotFoundException)
+                {
+                    continue;
+                }
+
+                labeledEvents.AddRange(BuildLabeledEventItems(record.Summary, eventsData.Events, labelsByEventId, snapshot.LabelById));
+            }
+        }
+
+        return new LabeledItemsResponse
+        {
+            Sessions = labeledSessions
+                .OrderByDescending(GetSessionSortKey, StringComparer.Ordinal)
+                .ThenByDescending(session => session.Mtime, StringComparer.Ordinal)
+                .ToArray(),
+            Events = labeledEvents
+                .OrderByDescending(item => !string.IsNullOrWhiteSpace(item.Timestamp) ? item.Timestamp : item.SessionStartedAt, StringComparer.Ordinal)
+                .ThenByDescending(item => item.SessionMtime, StringComparer.Ordinal)
+                .ToArray(),
+        };
+    }
+
     public Task<CostSummaryResponse> GetCostSummaryAsync(CancellationToken cancellationToken = default)
     {
         var timeZone = TimeZoneInfo.Local;
@@ -873,6 +932,34 @@ public sealed partial class ViewerService
             && eventMap.Values.Any(labelIds => labelIds.Contains(labelId));
     }
 
+    private static IEnumerable<LabeledEventListItemDto> BuildLabeledEventItems(
+        SessionSummaryDto session,
+        IReadOnlyList<SessionEventDto> events,
+        IReadOnlyDictionary<string, IReadOnlyList<int>> labelsByEventId,
+        IReadOnlyDictionary<int, LabelDto> labelById)
+    {
+        if (labelsByEventId.Count == 0 || events.Count == 0)
+        {
+            yield break;
+        }
+
+        foreach (var @event in events)
+        {
+            if (string.IsNullOrWhiteSpace(@event.EventId) || !labelsByEventId.TryGetValue(@event.EventId, out var labelIds))
+            {
+                continue;
+            }
+
+            var labels = ResolveLabels(labelIds, labelById);
+            if (labels.Count == 0)
+            {
+                continue;
+            }
+
+            yield return ToLabeledEventItem(session, @event, labels);
+        }
+    }
+
     private static IReadOnlyList<LabelDto> ResolveLabels(IEnumerable<int> ids, IReadOnlyDictionary<int, LabelDto> labelById)
     {
         return ids
@@ -981,6 +1068,29 @@ public sealed partial class ViewerService
         return session with { SessionLabelIds = labelIds };
     }
 
+    private static LabeledEventListItemDto ToLabeledEventItem(
+        SessionSummaryDto session,
+        SessionEventDto @event,
+        IReadOnlyList<LabelDto> labels)
+    {
+        return new LabeledEventListItemDto
+        {
+            Path = session.Path,
+            RelativePath = session.RelativePath,
+            SessionId = session.SessionId,
+            SessionStartedAt = session.StartedAt,
+            SessionMtime = session.Mtime,
+            Cwd = session.Cwd,
+            Source = session.Source,
+            EventId = @event.EventId,
+            Timestamp = @event.Timestamp,
+            Kind = @event.Kind,
+            Role = @event.Role,
+            Preview = BuildLabeledEventPreview(@event),
+            Labels = labels,
+        };
+    }
+
     private static SessionEventDto WithEventLabels(SessionEventDto @event, IReadOnlyList<LabelDto> labels)
     {
         return new SessionEventDto
@@ -997,6 +1107,22 @@ public sealed partial class ViewerService
             SystemLabels = @event.SystemLabels,
             Labels = labels,
         };
+    }
+
+    private static string BuildLabeledEventPreview(SessionEventDto @event)
+    {
+        var text = @event.Kind switch
+        {
+            "message" => @event.Text,
+            "function_call" => string.Join(' ', new[] { @event.Name, @event.Arguments }.Where(value => !string.IsNullOrWhiteSpace(value))),
+            "function_output" => @event.Output,
+            "agent_update" => @event.Text,
+            _ => string.Join(' ', new[] { @event.Text, @event.Output, @event.Arguments }.Where(value => !string.IsNullOrWhiteSpace(value))),
+        };
+
+        return string.IsNullOrWhiteSpace(text)
+            ? string.Empty
+            : CollapseNewlines(text, 220);
     }
 
     // ── workspace.yaml reader ──────────────────────────────────────
