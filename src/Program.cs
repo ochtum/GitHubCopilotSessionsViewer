@@ -74,6 +74,7 @@ public class Program
             pipeline.MinifyCssFiles("css/**/*.css");
         });
         builder.Services.AddSingleton<LabelStore>();
+        builder.Services.AddSingleton<ViewerSettingsStore>();
         builder.Services.AddSingleton<ViewerService>();
 
         var app = builder.Build();

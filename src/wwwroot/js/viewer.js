@@ -658,7 +658,7 @@ const I18N = {
     'detail.toggle.ai': 'AIレスポンスのみ表示',
     'detail.toggle.turn': '各入力と最終応答のみ',
     'detail.toggle.reverse': '表示順を逆にする',
-    'detail.label': 'イベントラベル',
+    'detail.label': 'ラベルフィルター',
     'detail.label.all': 'all',
     'detail.refresh': 'Refresh',
     'detail.refreshing': 'Refreshing...',
@@ -854,7 +854,7 @@ const I18N = {
     'detail.toggle.ai': 'Only AI responses',
     'detail.toggle.turn': 'Only each input and final reply',
     'detail.toggle.reverse': 'Reverse order',
-    'detail.label': 'Event label',
+    'detail.label': 'Label filter',
     'detail.label.all': 'all',
     'detail.refresh': 'Refresh',
     'detail.refreshing': 'Refreshing...',
@@ -1050,7 +1050,7 @@ const I18N = {
     'detail.toggle.ai': '仅显示 AI 回复',
     'detail.toggle.turn': '仅显示每次输入与最终回复',
     'detail.toggle.reverse': '反转显示顺序',
-    'detail.label': '事件标签',
+    'detail.label': '标签筛选',
     'detail.label.all': 'all',
     'detail.refresh': 'Refresh',
     'detail.refreshing': 'Refreshing...',
@@ -1222,7 +1222,7 @@ I18N['zh-Hant'] = {
   'detail.toggle.ai': '僅顯示 AI 回覆',
   'detail.toggle.turn': '僅顯示每次輸入與最終回覆',
   'detail.toggle.reverse': '反轉顯示順序',
-  'detail.label': '事件標籤',
+  'detail.label': '標籤篩選',
   'detail.label.all': 'all',
   'detail.refresh': '刷新',
   'detail.refreshing': '正在刷新...',
@@ -4084,58 +4084,78 @@ function renderLabeledList(){
   }
 }
 
-function getDisplayEvents(){
-  let events = state.activeEvents || [];
-  if(isTurnBoundaryFilterEnabled()){
-    events = filterEventsToTurnBoundaries(events);
-  }
-  const selectedEventLabelId = getSelectedDetailEventLabelFilter();
-  if(selectedEventLabelId){
-    events = events.filter(ev => (ev.labels || []).some(label => String(label.id) === selectedEventLabelId));
-  }
+function applyDetailMessageDisplayFilters(events){
+  let filteredEvents = Array.isArray(events) ? events : [];
   const showOnlyUser = document.getElementById('only_user_instruction').checked;
   const showOnlyAssistant = document.getElementById('only_ai_response').checked;
-  if(showOnlyUser || showOnlyAssistant){
-    events = events.filter(ev => {
-      if(ev.kind !== 'message') return false;
+  const showTurnBoundaryOnly = isTurnBoundaryFilterEnabled();
+  const hasMessageDisplayFilter = showTurnBoundaryOnly || showOnlyUser || showOnlyAssistant;
+  if(!hasMessageDisplayFilter){
+    return filteredEvents;
+  }
+  const messageSource = showTurnBoundaryOnly ? filterEventsToTurnBoundaries(filteredEvents) : filteredEvents;
+  const visibleMessageEvents = new Set();
+  if(hasMessageDisplayFilter){
+    messageSource.forEach(ev => {
+      if(ev.kind !== 'message'){
+        return;
+      }
+      if(!showOnlyUser && !showOnlyAssistant){
+        visibleMessageEvents.add(ev);
+        return;
+      }
       if(showOnlyUser && ev.role === 'user'){
         if(isSystemLabeledUserEvent(ev)){
-          return false;
+          return;
         }
-        return true;
+        visibleMessageEvents.add(ev);
+        return;
       }
       if(showOnlyAssistant && ev.role === 'assistant'){
-        return true;
+        visibleMessageEvents.add(ev);
       }
-      return false;
     });
   }
-  if(state.detailMessageRangeMode){
-    const selectedMessage = getSelectedMessageRangeEvent();
-    if(selectedMessage){
-      const activeEvents = state.activeEvents || [];
-      const selectedIndex = activeEvents.findIndex(ev => ev === selectedMessage);
-      const rawIndexByEvent = new Map(activeEvents.map((ev, index) => [ev, index]));
-      if(selectedIndex >= 0){
-        events = events.filter(ev => {
-          const rawIndex = rawIndexByEvent.get(ev);
-          if(typeof rawIndex !== 'number'){
-            return false;
-          }
-          if(state.detailMessageRangeMode === 'after'){
-            return rawIndex >= selectedIndex;
-          }
-          if(state.detailMessageRangeMode === 'before'){
-            return rawIndex <= selectedIndex;
-          }
-          return true;
-        });
-      }
+  filteredEvents = filteredEvents.filter(ev => visibleMessageEvents.has(ev));
+  return filteredEvents;
+}
+
+function applyDetailMessageRangeFilter(events, rawIndexByEvent){
+  if(!state.detailMessageRangeMode){
+    return events;
+  }
+  const selectedMessage = getSelectedMessageRangeEvent();
+  if(!selectedMessage){
+    return events;
+  }
+  const activeEvents = state.activeEvents || [];
+  const selectedIndex = activeEvents.findIndex(ev => ev === selectedMessage);
+  if(selectedIndex < 0){
+    return events;
+  }
+  return events.filter(ev => {
+    const rawIndex = rawIndexByEvent.get(ev);
+    if(typeof rawIndex !== 'number'){
+      return false;
     }
+    if(state.detailMessageRangeMode === 'after'){
+      return rawIndex >= selectedIndex;
+    }
+    if(state.detailMessageRangeMode === 'before'){
+      return rawIndex <= selectedIndex;
+    }
+    return true;
+  });
+}
+
+function filterEventsByDetailKeywordTerm(events){
+  if(detailKeywordFilterTerm === ''){
+    return events;
   }
-  if(detailKeywordFilterTerm !== ''){
-    events = events.filter(ev => containsLiteralKeyword(getEventBodyText(ev), detailKeywordFilterTerm));
-  }
+  return events.filter(ev => containsLiteralKeyword(getEventBodyText(ev), detailKeywordFilterTerm));
+}
+
+function applyDetailEventDateFilter(events){
   const detailEvFromRaw = buildDateTimeIsoFromParts(
     getFpDateValue('detail_event_date_from_date'),
     document.getElementById('detail_event_date_from_time').value,
@@ -4148,15 +4168,35 @@ function getDisplayEvents(){
   );
   const detailEvFromTs = parseOptionalDatetimeStart(detailEvFromRaw);
   const detailEvToTs = parseOptionalDatetimeEnd(detailEvToRaw);
-  if(detailEvFromTs !== null || detailEvToTs !== null){
-    events = events.filter(ev => {
-      const evTs = ev.timestamp ? toTimestamp(ev.timestamp) : NaN;
-      if(Number.isNaN(evTs)) return false;
-      if(detailEvFromTs !== null && evTs < detailEvFromTs) return false;
-      if(detailEvToTs !== null && evTs > detailEvToTs) return false;
-      return true;
-    });
+  if(detailEvFromTs === null && detailEvToTs === null){
+    return events;
   }
+  return events.filter(ev => {
+    const evTs = ev.timestamp ? toTimestamp(ev.timestamp) : NaN;
+    if(Number.isNaN(evTs)) return false;
+    if(detailEvFromTs !== null && evTs < detailEvFromTs) return false;
+    if(detailEvToTs !== null && evTs > detailEvToTs) return false;
+    return true;
+  });
+}
+
+function applyDetailVisibilityFilters(events, rawIndexByEvent){
+  let filteredEvents = Array.isArray(events) ? events : [];
+  const selectedEventLabelId = getSelectedDetailEventLabelFilter();
+  if(selectedEventLabelId){
+    filteredEvents = filteredEvents.filter(ev => (ev.labels || []).some(label => String(label.id) === selectedEventLabelId));
+  }
+  filteredEvents = applyDetailMessageDisplayFilters(filteredEvents);
+  filteredEvents = applyDetailMessageRangeFilter(filteredEvents, rawIndexByEvent);
+  filteredEvents = filterEventsByDetailKeywordTerm(filteredEvents);
+  filteredEvents = applyDetailEventDateFilter(filteredEvents);
+  return filteredEvents;
+}
+
+function getDisplayEvents(){
+  const rawEvents = state.activeEvents || [];
+  const rawIndexByEvent = new Map(rawEvents.map((ev, index) => [ev, index]));
+  let events = applyDetailVisibilityFilters(rawEvents, rawIndexByEvent);
   if(document.getElementById('reverse_order').checked){
     events = [...events].reverse();
   }

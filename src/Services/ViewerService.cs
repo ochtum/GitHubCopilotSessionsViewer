@@ -10,8 +10,6 @@ namespace GitHubCopilotSessionsViewer.Services;
 
 public sealed partial class ViewerService
 {
-    private const int MaxList = 300;
-    private const int MaxEvents = 2000;
     private const int SearchTextLimit = 50_000;
     private const int MaxCacheEntries = 500;
     private const decimal PremiumRequestUnitPriceUsd = 0.04m;
@@ -50,13 +48,15 @@ public sealed partial class ViewerService
     ];
 
     private readonly LabelStore _labelStore;
+    private readonly ViewerSettingsStore _viewerSettings;
     private readonly ConcurrentDictionary<string, SessionCacheEntry> _cache = new(PathComparer);
     private IReadOnlyList<string>? _sessionRoots;
     private IReadOnlyList<string>? _wslDistroRoots;
 
-    public ViewerService(LabelStore labelStore)
+    public ViewerService(LabelStore labelStore, ViewerSettingsStore viewerSettings)
     {
         _labelStore = labelStore;
+        _viewerSettings = viewerSettings;
     }
 
     public IReadOnlyList<string> GetSessionRoots()
@@ -251,6 +251,7 @@ public sealed partial class ViewerService
             sessions.Add(WithSessionLabelIds(record.Summary, sessionLabelIds));
         }
 
+        var settings = _viewerSettings.GetSnapshot();
         IOrderedEnumerable<SessionSummaryDto> ordered = normalizedSort switch
         {
             "asc" => sessions
@@ -267,7 +268,7 @@ public sealed partial class ViewerService
         return new SessionListResponse
         {
             Root = string.Join(" | ", roots),
-            Sessions = ordered.Take(MaxList).ToArray(),
+            Sessions = ordered.Take(settings.SessionListMax).ToArray(),
         };
     }
 
@@ -473,20 +474,25 @@ public sealed partial class ViewerService
         }
 
         var signature = GetSignature(fileInfo);
+        var settings = _viewerSettings.GetSnapshot();
         if (_cache.TryGetValue(eventsPath, out var cached)
             && cached.Signature == signature
+            && cached.ViewerSettingsVersion == settings.Version
+            && cached.MaxEvents == settings.SessionEventsMax
             && cached.EventsData is not null)
         {
             cached.LastAccessedTicks = Environment.TickCount64;
             return cached.EventsData;
         }
 
-        var built = BuildEventsData(eventsPath);
+        var built = BuildEventsData(eventsPath, settings.SessionEventsMax);
         var next = new SessionCacheEntry
         {
             Signature = signature,
             IndexRecord = cached is not null && cached.Signature == signature ? cached.IndexRecord : null,
             EventsData = built,
+            ViewerSettingsVersion = settings.Version,
+            MaxEvents = settings.SessionEventsMax,
         };
         _cache[eventsPath] = next;
         TrimCacheIfNeeded();
@@ -668,7 +674,7 @@ public sealed partial class ViewerService
 
     // ── Build events ───────────────────────────────────────────────
 
-    private EventsData BuildEventsData(string eventsPath)
+    private EventsData BuildEventsData(string eventsPath, int maxEvents)
     {
         var events = new List<SessionEventDto>();
         var rawLineCount = 0;
@@ -841,7 +847,7 @@ public sealed partial class ViewerService
                 }
             }
 
-            if (events.Count >= MaxEvents)
+            if (events.Count >= maxEvents)
             {
                 break;
             }
@@ -1769,6 +1775,10 @@ public sealed partial class ViewerService
         public IndexRecord? IndexRecord { get; init; }
 
         public EventsData? EventsData { get; init; }
+
+        public long ViewerSettingsVersion { get; init; }
+
+        public int MaxEvents { get; init; }
 
         private long _lastAccessedTicks = Environment.TickCount64;
 
