@@ -1,6 +1,0 @@
-.gitattributes text eol=lf
-*.py text eol=lf
-*.md text eol=crlf
-*.jpg -text
-*.jpeg -text
-*.png -text
