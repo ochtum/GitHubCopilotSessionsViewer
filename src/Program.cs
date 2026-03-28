@@ -185,9 +185,10 @@ public class Program
             return Results.Ok(await viewer.GetLabeledItemsAsync(cancellationToken));
         });
 
-        app.MapGet("/api/cost-summary", async (ViewerService viewer, CancellationToken cancellationToken) =>
+        app.MapGet("/api/cost-summary", async (HttpRequest request, ViewerService viewer, CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await viewer.GetCostSummaryAsync(cancellationToken));
+            var forceRefresh = ParseOptionalBool(request.Query["force"]) ?? false;
+            return Results.Ok(await viewer.GetCostSummaryAsync(forceRefresh, cancellationToken));
         });
 
         app.MapGet("/api/sessions", async (HttpRequest request, ViewerService viewer, CancellationToken cancellationToken) =>
@@ -199,6 +200,18 @@ public class Program
                 query["sort"],
                 ParseOptionalInt(query["session_label_id"]),
                 ParseOptionalInt(query["event_label_id"]),
+                ParseOptionalBool(query["force"]) ?? false,
+                cancellationToken);
+            return Results.Ok(response);
+        });
+
+        app.MapGet("/api/sessions-lite", async (HttpRequest request, ViewerService viewer, CancellationToken cancellationToken) =>
+        {
+            var query = request.Query;
+            var response = await viewer.GetSessionsLiteAsync(
+                query["sort"],
+                ParseOptionalInt(query["offset"]),
+                ParseOptionalInt(query["limit"]),
                 cancellationToken);
             return Results.Ok(response);
         });
@@ -226,6 +239,22 @@ public class Program
             catch (UnauthorizedAccessException ex)
             {
                 return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status500InternalServerError);
+            }
+        });
+
+        app.MapGet("/api/session-version", (HttpRequest request, ViewerService viewer) =>
+        {
+            try
+            {
+                return Results.Ok(viewer.GetSessionVersion(request.Query["path"]));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status404NotFound);
             }
         });
 
@@ -309,6 +338,17 @@ public class Program
     private static int? ParseOptionalInt(string? raw)
     {
         return int.TryParse(raw, out var value) ? value : null;
+    }
+
+    private static bool? ParseOptionalBool(string? raw)
+    {
+        return bool.TryParse(raw, out var value)
+            ? value
+            : raw is "1"
+                ? true
+                : raw is "0"
+                    ? false
+                    : null;
     }
 
     private static void ConfigureDefaultUrl(WebApplicationBuilder builder, string defaultUrl)
