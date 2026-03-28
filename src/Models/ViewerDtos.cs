@@ -155,6 +155,21 @@ public sealed class CostSummaryGroupDto
     public IReadOnlyList<CostSummaryPeriodDto> Periods { get; init; } = [];
 }
 
+public sealed class ExchangeRateDto
+{
+    public string BaseCurrency { get; init; } = string.Empty;
+
+    public decimal JpyRate { get; init; }
+
+    public decimal CnyRate { get; init; }
+
+    public decimal TwdRate { get; init; }
+
+    public decimal HkdRate { get; init; }
+
+    public string FetchedAt { get; init; } = string.Empty;
+}
+
 public sealed class CostSummaryResponse
 {
     public string GeneratedAt { get; init; } = string.Empty;
@@ -162,6 +177,8 @@ public sealed class CostSummaryResponse
     public string TimeZoneId { get; init; } = string.Empty;
 
     public decimal UnitPriceUsd { get; init; }
+
+    public ExchangeRateDto? ExchangeRate { get; init; }
 
     public IReadOnlyList<CostSummaryGroupDto> Groups { get; init; } = [];
 }

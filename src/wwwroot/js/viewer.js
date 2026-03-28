@@ -30,7 +30,9 @@ const state = {
 
 const FILTER_STORAGE_KEY = 'github_copilot_sessions_viewer_filters_v1';
 const LANGUAGE_STORAGE_KEY = 'github_copilot_sessions_viewer_language_v1';
+const COST_CURRENCY_STORAGE_KEY = 'github_copilot_sessions_viewer_cost_currency_v1';
 const PREMIUM_REQUEST_UNIT_PRICE_USD = 0.04;
+const SUPPORTED_COST_CURRENCIES = ['USD', 'JPY', 'CNY', 'TWD', 'HKD'];
 const fpInstances = {};
 const segInstances = {};
 const FP_LOCALE_MAP = {
@@ -585,6 +587,7 @@ const SUPPORTED_LANGUAGES = ['ja', 'en', 'zh-Hans', 'zh-Hant'];
 const I18N = {
   ja: {
     'language.selector': '言語',
+    'currency.selector': '通貨',
     'header.subtitle': 'GitHub Copilot CLIのイベント履歴を一覧表示・詳細表示して、検索できます。\n覚えておきたい内容にラベルを付けて、あとから見つけることもできます。',
     'header.shortcuts': 'ショートカット',
     'header.meta.show': 'メタ表示',
@@ -734,7 +737,7 @@ const I18N = {
     'meta.premiumTotalCost': 'total cost',
     'meta.model': 'model',
     'meta.tooltip.premiumUnitPrice': '追加購入するプレミアムリクエスト 1 件あたりの単価（USD）です。',
-    'meta.tooltip.premiumTotalCost': 'premium request 件数 × unit price で計算した概算合計金額（USD）です。',
+    'meta.tooltip.premiumTotalCost': 'premium request 件数 × unit price で計算した概算合計金額（USD）です。表示通貨を選択すると換算額も併記します。',
     'meta.status': 'status',
     'summary.labels': 'labels: sessions {sessions} / events {events}',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
@@ -782,6 +785,7 @@ const I18N = {
   },
   en: {
     'language.selector': 'Language',
+    'currency.selector': 'Currency',
     'header.subtitle': 'Browse GitHub Copilot CLI event histories in list and detail views, and search them.\nYou can also attach labels to anything worth remembering and find it later.',
     'header.shortcuts': 'Shortcuts',
     'header.meta.show': 'Show meta',
@@ -931,7 +935,7 @@ const I18N = {
     'meta.premiumTotalCost': 'total cost',
     'meta.model': 'model',
     'meta.tooltip.premiumUnitPrice': 'USD price for one additionally purchased premium request.',
-    'meta.tooltip.premiumTotalCost': 'Estimated total in USD calculated as premium request count × unit price.',
+    'meta.tooltip.premiumTotalCost': 'Estimated total in USD calculated as premium request count × unit price. A converted amount is also shown when a display currency is selected.',
     'meta.status': 'status',
     'summary.labels': 'labels: sessions {sessions} / events {events}',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
@@ -979,6 +983,7 @@ const I18N = {
   },
   'zh-Hans': {
     'language.selector': '语言',
+    'currency.selector': '货币',
     'header.subtitle': '可以通过列表和详细视图查看 GitHub Copilot CLI 的事件历史，并进行搜索。\n还可以给想保留的内容加上标签，之后再轻松找到。',
     'header.shortcuts': '快捷键',
     'header.meta.show': '显示元信息',
@@ -1128,7 +1133,7 @@ const I18N = {
     'meta.premiumTotalCost': 'total cost',
     'meta.model': 'model',
     'meta.tooltip.premiumUnitPrice': '额外购买的单个 premium request 的单价（USD）。',
-    'meta.tooltip.premiumTotalCost': '按 premium request 数量 × unit price 计算的预估总金额（USD）。',
+    'meta.tooltip.premiumTotalCost': '按 premium request 数量 × unit price 计算的预估总金额（USD）。选择显示货币时也会同时显示换算金额。',
     'meta.status': 'status',
     'summary.labels': 'labels: sessions {sessions} / events {events}',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
@@ -1178,6 +1183,7 @@ const I18N = {
 I18N['zh-Hant'] = {
   ...I18N['zh-Hans'],
   'language.selector': '語言',
+  'currency.selector': '幣別',
   'header.subtitle': '可以透過列表與詳細檢視查看 GitHub Copilot CLI 的事件歷史，並進行搜尋。\n還可以替想保留的內容加上標籤，之後再輕鬆找到。',
   'header.meta.show': '顯示中繼資訊',
   'header.meta.hide': '隱藏中繼資訊',
@@ -1325,6 +1331,7 @@ I18N['zh-Hant'] = {
   'copy.single': '複製',
 };
 let uiLanguage = 'ja';
+let selectedCostCurrency = 'USD';
 
 function normalizeLanguage(value){
   const raw = (value || '').trim();
@@ -1335,6 +1342,25 @@ function normalizeLanguage(value){
     return 'zh-Hant';
   }
   return SUPPORTED_LANGUAGES.includes(raw) ? raw : 'ja';
+}
+
+function normalizeCostCurrency(value){
+  const raw = (value || '').trim().toUpperCase();
+  return SUPPORTED_COST_CURRENCIES.includes(raw) ? raw : '';
+}
+
+function getDefaultCostCurrencyForLanguage(language){
+  const normalized = normalizeLanguage(language);
+  if(normalized === 'ja'){
+    return 'JPY';
+  }
+  if(normalized === 'zh-Hans'){
+    return 'CNY';
+  }
+  if(normalized === 'zh-Hant'){
+    return 'TWD';
+  }
+  return 'USD';
 }
 
 function t(key, vars){
@@ -1413,6 +1439,11 @@ function applyMainLanguage(){
   document.title = 'GitHub Copilot Sessions Viewer';
   document.getElementById('language_select').value = uiLanguage;
   document.getElementById('language_select').setAttribute('aria-label', t('language.selector'));
+  const currencySelect = document.getElementById('currency_select');
+  if(currencySelect){
+    currencySelect.value = getPreferredCostCurrencyCode();
+    currencySelect.setAttribute('aria-label', t('currency.selector'));
+  }
   setText('.header-subtitle', t('header.subtitle'));
   setTextById('open_shortcuts', t('header.shortcuts'));
   document.getElementById('open_shortcuts').setAttribute('title', t('header.shortcuts'));
@@ -1571,9 +1602,39 @@ function readStoredLanguage(){
   }
 }
 
+function readStoredCostCurrency(){
+  try {
+    return localStorage.getItem(COST_CURRENCY_STORAGE_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
 function getRequestedLanguage(){
   const params = new URLSearchParams(window.location.search);
   return normalizeLanguage(params.get('lang') || readStoredLanguage() || uiLanguage);
+}
+
+function getRequestedCostCurrency(){
+  const params = new URLSearchParams(window.location.search);
+  return normalizeCostCurrency(params.get('currency') || readStoredCostCurrency() || getDefaultCostCurrencyForLanguage(uiLanguage));
+}
+
+function getPreferredCostCurrencyCode(){
+  return normalizeCostCurrency(selectedCostCurrency) || 'USD';
+}
+
+function setCostCurrency(nextCurrency, persist){
+  const normalized = normalizeCostCurrency(nextCurrency) || getDefaultCostCurrencyForLanguage(uiLanguage);
+  selectedCostCurrency = normalized;
+  if(persist !== false){
+    try {
+      localStorage.setItem(COST_CURRENCY_STORAGE_KEY, normalized);
+    } catch (e) {
+      // Ignore storage write errors.
+    }
+  }
+  applyMainLanguage();
 }
 
 const SEARCH_DEBOUNCE_MS = 180;
@@ -1613,6 +1674,7 @@ const todayUsageState = {
   requestCount: 0,
   premiumRequestCount: 0,
   totalCostUsd: 0,
+  exchangeRate: null,
 };
 
 function esc(s){
@@ -2312,7 +2374,7 @@ function renderTodayUsage(){
     },
     {
       label: t('todayUsage.totalCost'),
-      value: formatUsd(todayUsageState.totalCostUsd),
+      value: formatCostDisplay(todayUsageState.totalCostUsd, todayUsageState.exchangeRate),
     },
   ];
 
@@ -2346,17 +2408,22 @@ async function loadTodayUsageSummary(){
     todayUsageState.requestCount = Number.isFinite(requestCount) ? requestCount : 0;
     todayUsageState.premiumRequestCount = Number.isFinite(premiumRequestCount) ? premiumRequestCount : 0;
     todayUsageState.totalCostUsd = Number.isFinite(totalCostUsd) ? totalCostUsd : 0;
+    todayUsageState.exchangeRate = data && data.exchange_rate ? data.exchange_rate : null;
     todayUsageState.hasLoaded = true;
     todayUsageState.hasError = false;
   } catch (error) {
     if(requestId !== loadTodayUsageRequestSeq){
       return;
     }
+    todayUsageState.exchangeRate = null;
     todayUsageState.hasError = true;
   } finally {
     if(requestId === loadTodayUsageRequestSeq){
       todayUsageState.isLoading = false;
       renderTodayUsage();
+      if(state.activeSession){
+        renderActiveSession();
+      }
     }
   }
 }
@@ -2376,7 +2443,11 @@ function openCostsWindow(){
     costsWindow.focus();
     return;
   }
-  costsWindow = window.open(`/costs?lang=${encodeURIComponent(uiLanguage)}`, 'github_copilot_costs', features);
+  const params = new URLSearchParams({
+    lang: uiLanguage,
+    currency: getPreferredCostCurrencyCode(),
+  });
+  costsWindow = window.open(`/costs?${params.toString()}`, 'github_copilot_costs', features);
 }
 
 function highlightSessionPath(s){
@@ -2415,6 +2486,83 @@ function formatUsd(amount){
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatJpy(amount){
+  if(!Number.isFinite(amount)) return '';
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'JPY',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatCny(amount){
+  if(!Number.isFinite(amount)) return '';
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'CNY',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(amount);
+}
+
+function formatLocalCurrency(amount, currencyCode){
+  if(!Number.isFinite(amount) || !currencyCode || currencyCode === 'USD') return '';
+  if(currencyCode === 'JPY') return formatJpy(amount);
+  if(currencyCode === 'CNY') return formatCny(amount);
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: currencyCode,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(amount);
+}
+
+function getExchangeRateValue(exchangeRate, currencyCode){
+  if(!exchangeRate || currencyCode === 'USD'){
+    return null;
+  }
+  const rate = currencyCode === 'JPY'
+    ? Number(exchangeRate.jpy_rate)
+    : currencyCode === 'CNY'
+      ? Number(exchangeRate.cny_rate)
+      : currencyCode === 'TWD'
+        ? Number(exchangeRate.twd_rate)
+        : currencyCode === 'HKD'
+          ? Number(exchangeRate.hkd_rate)
+          : NaN;
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+function convertUsdToLocalCurrency(amount, exchangeRate, currencyCode){
+  const usd = Number(amount);
+  const rate = getExchangeRateValue(exchangeRate, currencyCode);
+  if(!Number.isFinite(usd) || !Number.isFinite(rate) || rate <= 0){
+    return null;
+  }
+  return usd * rate;
+}
+
+function formatCostDisplay(amount, exchangeRate){
+  const usd = Number(amount);
+  if(!Number.isFinite(usd)){
+    return formatUsd(NaN);
+  }
+  const currencyCode = getPreferredCostCurrencyCode();
+  if(currencyCode === 'USD'){
+    return formatUsd(usd);
+  }
+  const localAmount = convertUsdToLocalCurrency(usd, exchangeRate, currencyCode);
+  if(localAmount == null){
+    return formatUsd(usd);
+  }
+  const localText = formatLocalCurrency(localAmount, currencyCode);
+  return localText ? `${formatUsd(usd)} / ${localText}` : formatUsd(usd);
 }
 
 function formatCount(value){
@@ -4670,7 +4818,7 @@ function renderActiveSession(){
     : '-';
   const premiumUnitPriceSummary = formatUsd(PREMIUM_REQUEST_UNIT_PRICE_USD);
   const premiumTotalCostSummary = Number.isFinite(state.activeSession.premium_request_count)
-    ? formatUsd(state.activeSession.premium_request_count * PREMIUM_REQUEST_UNIT_PRICE_USD)
+    ? formatCostDisplay(state.activeSession.premium_request_count * PREMIUM_REQUEST_UNIT_PRICE_USD, todayUsageState.exchangeRate)
     : '-';
   const modelSummary = (state.activeSession.model || '').toString().trim() || '-';
   const errorNote = state.detailError
@@ -5218,6 +5366,9 @@ function initViewerPage(){
   document.getElementById('language_select').addEventListener('change', (event) => {
     setUiLanguage(event.target.value);
   });
+  document.getElementById('currency_select').addEventListener('change', (event) => {
+    setCostCurrency(event.target.value);
+  });
   document.getElementById('detail_keyword_q').addEventListener('keydown', (event) => {
     if(event.key === 'Enter' && !event.isComposing){
       event.preventDefault();
@@ -5483,12 +5634,18 @@ function initViewerPage(){
     await refreshLabeledViews();
   });
   window.addEventListener('storage', (event) => {
-    if(event.key !== LANGUAGE_STORAGE_KEY){
+    if(event.key === LANGUAGE_STORAGE_KEY){
+      const nextLanguage = normalizeLanguage(event.newValue || 'ja');
+      if(nextLanguage !== uiLanguage){
+        setUiLanguage(nextLanguage, false);
+      }
       return;
     }
-    const nextLanguage = normalizeLanguage(event.newValue || 'ja');
-    if(nextLanguage !== uiLanguage){
-      setUiLanguage(nextLanguage, false);
+    if(event.key === COST_CURRENCY_STORAGE_KEY){
+      const nextCurrency = normalizeCostCurrency(event.newValue || '') || getDefaultCostCurrencyForLanguage(uiLanguage);
+      if(nextCurrency !== getPreferredCostCurrencyCode()){
+        setCostCurrency(nextCurrency, false);
+      }
     }
   });
   window.addEventListener('resize', () => {
@@ -5509,6 +5666,7 @@ function initViewerPage(){
   initSegmentedInputs();
   initAllFlatpickr();
   setUiLanguage(getRequestedLanguage(), false);
+  setCostCurrency(getRequestedCostCurrency(), false);
   updateFilterVisibility();
   updateCompactUiMode();
   updateDetailMetaVisibility();

@@ -48,15 +48,20 @@ public sealed partial class ViewerService
     ];
 
     private readonly LabelStore _labelStore;
+    private readonly ExchangeRateService _exchangeRates;
     private readonly ViewerSettingsStore _viewerSettings;
     private readonly ConcurrentDictionary<string, SessionCacheEntry> _cache = new(PathComparer);
     private IReadOnlyList<string>? _sessionRoots;
     private IReadOnlyList<string>? _wslDistroRoots;
 
-    public ViewerService(LabelStore labelStore, ViewerSettingsStore viewerSettings)
+    public ViewerService(
+        LabelStore labelStore,
+        ViewerSettingsStore viewerSettings,
+        ExchangeRateService exchangeRates)
     {
         _labelStore = labelStore;
         _viewerSettings = viewerSettings;
+        _exchangeRates = exchangeRates;
     }
 
     public IReadOnlyList<string> GetSessionRoots()
@@ -155,10 +160,11 @@ public sealed partial class ViewerService
         };
     }
 
-    public Task<CostSummaryResponse> GetCostSummaryAsync(CancellationToken cancellationToken = default)
+    public async Task<CostSummaryResponse> GetCostSummaryAsync(CancellationToken cancellationToken = default)
     {
         var timeZone = TimeZoneInfo.Local;
         var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timeZone).DateTime;
+        var exchangeRate = await _exchangeRates.GetUsdExchangeRatesAsync(cancellationToken);
         var groupAccumulators = BuildCostSummaryGroupDefinitions(nowLocal)
             .Select(definition => new CostSummaryGroupAccumulator(definition))
             .ToArray();
@@ -188,15 +194,16 @@ public sealed partial class ViewerService
             }
         }
 
-        return Task.FromResult(new CostSummaryResponse
+        return new CostSummaryResponse
         {
             GeneratedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
             TimeZoneId = timeZone.Id,
             UnitPriceUsd = PremiumRequestUnitPriceUsd,
+            ExchangeRate = exchangeRate,
             Groups = groupAccumulators
                 .Select(group => group.ToDto())
                 .ToArray(),
-        });
+        };
     }
 
     public async Task<SessionListResponse> GetSessionsAsync(
