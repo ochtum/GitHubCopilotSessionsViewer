@@ -201,6 +201,8 @@ public class Program
                 ParseOptionalInt(query["session_label_id"]),
                 ParseOptionalInt(query["event_label_id"]),
                 ParseOptionalBool(query["force"]) ?? false,
+                ParseOptionalInt(query["offset"]),
+                ParseOptionalInt(query["limit"]),
                 cancellationToken);
             return Results.Ok(response);
         });
