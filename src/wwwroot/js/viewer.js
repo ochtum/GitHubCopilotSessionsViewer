@@ -8,10 +8,13 @@ const state = {
   activeSession: null,
   activeEvents: [],
   activeRawLineCount: 0,
+  activeSessionVersion: '',
   sessionRoot: '',
   labels: [],
   isSessionsLoading: false,
+  isSessionsBackgroundLoading: false,
   hasLoadedSessions: false,
+  sessionsTotalCount: 0,
   sessionsError: '',
   sessionsLoadMode: '',
   isLabeledLoading: false,
@@ -30,7 +33,13 @@ const state = {
 
 const FILTER_STORAGE_KEY = 'github_copilot_sessions_viewer_filters_v1';
 const LANGUAGE_STORAGE_KEY = 'github_copilot_sessions_viewer_language_v1';
+const COST_CURRENCY_STORAGE_KEY = 'github_copilot_sessions_viewer_cost_currency_v1';
+const COST_SUMMARY_CACHE_KEY = 'github_copilot_sessions_viewer_cost_summary_cache_v1';
+const SESSION_BACKGROUND_APPEND_DELAY_MS = 80;
+const COST_SUMMARY_PRELOAD_INTERVAL_MS = 5 * 60 * 1000;
+const COST_SUMMARY_CACHE_MAX_AGE_MS = COST_SUMMARY_PRELOAD_INTERVAL_MS;
 const PREMIUM_REQUEST_UNIT_PRICE_USD = 0.04;
+const SUPPORTED_COST_CURRENCIES = ['USD', 'JPY', 'CNY', 'TWD', 'HKD'];
 const fpInstances = {};
 const segInstances = {};
 const FP_LOCALE_MAP = {
@@ -585,6 +594,7 @@ const SUPPORTED_LANGUAGES = ['ja', 'en', 'zh-Hans', 'zh-Hant'];
 const I18N = {
   ja: {
     'language.selector': '言語',
+    'currency.selector': '通貨',
     'header.subtitle': 'GitHub Copilot CLIのイベント履歴を一覧表示・詳細表示して、検索できます。\n覚えておきたい内容にラベルを付けて、あとから見つけることもできます。',
     'header.shortcuts': 'ショートカット',
     'header.meta.show': 'メタ表示',
@@ -616,6 +626,8 @@ const I18N = {
     'todayUsage.loading': '今日集計を読み込み中...',
     'todayUsage.refreshing': '更新中...',
     'todayUsage.error': '今日集計の取得に失敗しました。',
+    'status.sessions.backgroundInline': '追加読込中 {loaded} / {total}',
+    'status.sessions.backgroundCopy': '操作は続けたまま、一覧を少しずつ追加しています。',
     'toolbar.kicker': 'Session Browser',
     'toolbar.heading': '検索と絞り込み',
     'toolbar.copy': 'フィルターは次回起動時にも保持されます。',
@@ -734,7 +746,7 @@ const I18N = {
     'meta.premiumTotalCost': 'total cost',
     'meta.model': 'model',
     'meta.tooltip.premiumUnitPrice': '追加購入するプレミアムリクエスト 1 件あたりの単価（USD）です。',
-    'meta.tooltip.premiumTotalCost': 'premium request 件数 × unit price で計算した概算合計金額（USD）です。',
+    'meta.tooltip.premiumTotalCost': 'premium request 件数 × unit price で計算した概算合計金額（USD）です。表示通貨を選択すると換算額も併記します。',
     'meta.status': 'status',
     'summary.labels': 'labels: sessions {sessions} / events {events}',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
@@ -782,6 +794,7 @@ const I18N = {
   },
   en: {
     'language.selector': 'Language',
+    'currency.selector': 'Currency',
     'header.subtitle': 'Browse GitHub Copilot CLI event histories in list and detail views, and search them.\nYou can also attach labels to anything worth remembering and find it later.',
     'header.shortcuts': 'Shortcuts',
     'header.meta.show': 'Show meta',
@@ -813,6 +826,8 @@ const I18N = {
     'todayUsage.loading': 'Loading today\'s usage...',
     'todayUsage.refreshing': 'Refreshing...',
     'todayUsage.error': 'Failed to load today\'s usage.',
+    'status.sessions.backgroundInline': 'Loading more {loaded} / {total}',
+    'status.sessions.backgroundCopy': 'The remaining sessions are being added in the background.',
     'toolbar.kicker': 'Session Browser',
     'toolbar.heading': 'Search and filter',
     'toolbar.copy': 'Filters are preserved the next time you launch the viewer.',
@@ -931,7 +946,7 @@ const I18N = {
     'meta.premiumTotalCost': 'total cost',
     'meta.model': 'model',
     'meta.tooltip.premiumUnitPrice': 'USD price for one additionally purchased premium request.',
-    'meta.tooltip.premiumTotalCost': 'Estimated total in USD calculated as premium request count × unit price.',
+    'meta.tooltip.premiumTotalCost': 'Estimated total in USD calculated as premium request count × unit price. A converted amount is also shown when a display currency is selected.',
     'meta.status': 'status',
     'summary.labels': 'labels: sessions {sessions} / events {events}',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
@@ -979,6 +994,7 @@ const I18N = {
   },
   'zh-Hans': {
     'language.selector': '语言',
+    'currency.selector': '货币',
     'header.subtitle': '可以通过列表和详细视图查看 GitHub Copilot CLI 的事件历史，并进行搜索。\n还可以给想保留的内容加上标签，之后再轻松找到。',
     'header.shortcuts': '快捷键',
     'header.meta.show': '显示元信息',
@@ -1010,6 +1026,8 @@ const I18N = {
     'todayUsage.loading': '正在加载今日汇总...',
     'todayUsage.refreshing': '正在刷新...',
     'todayUsage.error': '获取今日汇总失败。',
+    'status.sessions.backgroundInline': '继续加载 {loaded} / {total}',
+    'status.sessions.backgroundCopy': '不会打断当前操作，列表会逐步追加。',
     'toolbar.kicker': 'Session Browser',
     'toolbar.heading': '搜索与筛选',
     'toolbar.copy': '筛选条件会在下次启动时继续保留。',
@@ -1128,7 +1146,7 @@ const I18N = {
     'meta.premiumTotalCost': 'total cost',
     'meta.model': 'model',
     'meta.tooltip.premiumUnitPrice': '额外购买的单个 premium request 的单价（USD）。',
-    'meta.tooltip.premiumTotalCost': '按 premium request 数量 × unit price 计算的预估总金额（USD）。',
+    'meta.tooltip.premiumTotalCost': '按 premium request 数量 × unit price 计算的预估总金额（USD）。选择显示货币时也会同时显示换算金额。',
     'meta.status': 'status',
     'summary.labels': 'labels: sessions {sessions} / events {events}',
     'summary.sessions': 'sessions: {current} / {filtered} / {total}',
@@ -1178,6 +1196,7 @@ const I18N = {
 I18N['zh-Hant'] = {
   ...I18N['zh-Hans'],
   'language.selector': '語言',
+  'currency.selector': '幣別',
   'header.subtitle': '可以透過列表與詳細檢視查看 GitHub Copilot CLI 的事件歷史，並進行搜尋。\n還可以替想保留的內容加上標籤，之後再輕鬆找到。',
   'header.meta.show': '顯示中繼資訊',
   'header.meta.hide': '隱藏中繼資訊',
@@ -1194,6 +1213,8 @@ I18N['zh-Hant'] = {
   'todayUsage.loading': '正在載入今日彙總...',
   'todayUsage.refreshing': '正在更新...',
   'todayUsage.error': '取得今日彙總失敗。',
+  'status.sessions.backgroundInline': '繼續載入 {loaded} / {total}',
+  'status.sessions.backgroundCopy': '不會打斷目前操作，列表會逐步追加。',
   'toolbar.heading': '搜尋與篩選',
   'toolbar.copy': '篩選條件會在下次啟動時繼續保留。',
   'toolbar.filters.hide': '隱藏篩選',
@@ -1325,6 +1346,7 @@ I18N['zh-Hant'] = {
   'copy.single': '複製',
 };
 let uiLanguage = 'ja';
+let selectedCostCurrency = 'USD';
 
 function normalizeLanguage(value){
   const raw = (value || '').trim();
@@ -1335,6 +1357,25 @@ function normalizeLanguage(value){
     return 'zh-Hant';
   }
   return SUPPORTED_LANGUAGES.includes(raw) ? raw : 'ja';
+}
+
+function normalizeCostCurrency(value){
+  const raw = (value || '').trim().toUpperCase();
+  return SUPPORTED_COST_CURRENCIES.includes(raw) ? raw : '';
+}
+
+function getDefaultCostCurrencyForLanguage(language){
+  const normalized = normalizeLanguage(language);
+  if(normalized === 'ja'){
+    return 'JPY';
+  }
+  if(normalized === 'zh-Hans'){
+    return 'CNY';
+  }
+  if(normalized === 'zh-Hant'){
+    return 'TWD';
+  }
+  return 'USD';
 }
 
 function t(key, vars){
@@ -1413,6 +1454,11 @@ function applyMainLanguage(){
   document.title = 'GitHub Copilot Sessions Viewer';
   document.getElementById('language_select').value = uiLanguage;
   document.getElementById('language_select').setAttribute('aria-label', t('language.selector'));
+  const currencySelect = document.getElementById('currency_select');
+  if(currencySelect){
+    currencySelect.value = getPreferredCostCurrencyCode();
+    currencySelect.setAttribute('aria-label', t('currency.selector'));
+  }
   setText('.header-subtitle', t('header.subtitle'));
   setTextById('open_shortcuts', t('header.shortcuts'));
   document.getElementById('open_shortcuts').setAttribute('title', t('header.shortcuts'));
@@ -1571,9 +1617,39 @@ function readStoredLanguage(){
   }
 }
 
+function readStoredCostCurrency(){
+  try {
+    return localStorage.getItem(COST_CURRENCY_STORAGE_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
 function getRequestedLanguage(){
   const params = new URLSearchParams(window.location.search);
   return normalizeLanguage(params.get('lang') || readStoredLanguage() || uiLanguage);
+}
+
+function getRequestedCostCurrency(){
+  const params = new URLSearchParams(window.location.search);
+  return normalizeCostCurrency(params.get('currency') || readStoredCostCurrency() || getDefaultCostCurrencyForLanguage(uiLanguage));
+}
+
+function getPreferredCostCurrencyCode(){
+  return normalizeCostCurrency(selectedCostCurrency) || 'USD';
+}
+
+function setCostCurrency(nextCurrency, persist){
+  const normalized = normalizeCostCurrency(nextCurrency) || getDefaultCostCurrencyForLanguage(uiLanguage);
+  selectedCostCurrency = normalized;
+  if(persist !== false){
+    try {
+      localStorage.setItem(COST_CURRENCY_STORAGE_KEY, normalized);
+    } catch (e) {
+      // Ignore storage write errors.
+    }
+  }
+  applyMainLanguage();
 }
 
 const SEARCH_DEBOUNCE_MS = 180;
@@ -1584,6 +1660,7 @@ let loadSessionsRequestSeq = 0;
 let loadSessionDetailRequestSeq = 0;
 let loadLabeledItemsRequestSeq = 0;
 let loadTodayUsageRequestSeq = 0;
+let costSummaryRefreshTimer = 0;
 let saveFiltersFrame = 0;
 let deferredDetailSyncTimer = 0;
 let labelManagerWindow = null;
@@ -1613,6 +1690,7 @@ const todayUsageState = {
   requestCount: 0,
   premiumRequestCount: 0,
   totalCostUsd: 0,
+  exchangeRate: null,
 };
 
 function esc(s){
@@ -1633,6 +1711,102 @@ function buildStatusCard(title, copy, tone){
 
 function renderInlineStatus(title, copy, tone){
   return `<div class="status-wrap">${buildStatusCard(title, copy, tone)}</div>`;
+}
+
+function scheduleBackgroundTask(callback, delayMs){
+  const delay = Number.isFinite(delayMs) ? Math.max(0, delayMs) : 0;
+  window.setTimeout(() => {
+    if(typeof window.requestIdleCallback === 'function'){
+      window.requestIdleCallback(() => callback(), { timeout: 1000 });
+      return;
+    }
+    callback();
+  }, delay);
+}
+
+function readCostSummaryCache(){
+  try {
+    const raw = localStorage.getItem(COST_SUMMARY_CACHE_KEY) || '';
+    if(!raw){
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if(!parsed || typeof parsed !== 'object' || !parsed.data){
+      return null;
+    }
+    const savedAt = Number(parsed.saved_at);
+    return {
+      data: parsed.data,
+      savedAt: Number.isFinite(savedAt) ? savedAt : 0,
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeCostSummaryCache(data){
+  if(!data){
+    return;
+  }
+  try {
+    localStorage.setItem(COST_SUMMARY_CACHE_KEY, JSON.stringify({
+      saved_at: Date.now(),
+      data,
+    }));
+  } catch (error) {
+    // Ignore storage quota errors and keep the in-memory state only.
+  }
+}
+
+function isCostSummaryCacheFresh(entry){
+  return !!entry
+    && Number.isFinite(entry.savedAt)
+    && entry.savedAt > 0
+    && (Date.now() - entry.savedAt) <= COST_SUMMARY_CACHE_MAX_AGE_MS;
+}
+
+function setTodayUsageFromCostSummary(data){
+  const today = getTodayUsagePeriod(data);
+  const requestCount = Number(today && today.request_count);
+  const premiumRequestCount = Number(today && today.premium_request_count);
+  const totalCostUsd = Number(today && today.total_cost_usd);
+  todayUsageState.requestCount = Number.isFinite(requestCount) ? requestCount : 0;
+  todayUsageState.premiumRequestCount = Number.isFinite(premiumRequestCount) ? premiumRequestCount : 0;
+  todayUsageState.totalCostUsd = Number.isFinite(totalCostUsd) ? totalCostUsd : 0;
+  todayUsageState.exchangeRate = data && data.exchange_rate ? data.exchange_rate : null;
+  todayUsageState.hasLoaded = true;
+  todayUsageState.hasError = false;
+}
+
+function scheduleNextCostSummaryRefresh(delayMs){
+  if(costSummaryRefreshTimer){
+    clearTimeout(costSummaryRefreshTimer);
+  }
+  costSummaryRefreshTimer = window.setTimeout(() => {
+    costSummaryRefreshTimer = 0;
+    scheduleBackgroundTask(() => {
+      void loadTodayUsageSummary({ backgroundRefresh: true });
+    }, 0);
+  }, Math.max(0, delayMs));
+}
+
+function updateSessionsBackgroundIndicator(){
+  const indicator = document.getElementById('sessions_background_indicator');
+  if(!indicator){
+    return;
+  }
+  if(state.isSessionsBackgroundLoading){
+    indicator.textContent = t('status.sessions.backgroundInline', {
+      loaded: formatNumber(state.sessions.length),
+      total: formatNumber(state.sessionsTotalCount || state.sessions.length),
+    });
+    indicator.setAttribute('title', t('status.sessions.backgroundCopy'));
+    indicator.classList.remove('hidden');
+    return;
+  }
+  indicator.textContent = '';
+  indicator.removeAttribute('title');
+  indicator.classList.add('hidden');
 }
 
 function setStatusLayer(id, title, copy, tone){
@@ -2312,7 +2486,7 @@ function renderTodayUsage(){
     },
     {
       label: t('todayUsage.totalCost'),
-      value: formatUsd(todayUsageState.totalCostUsd),
+      value: formatCostDisplay(todayUsageState.totalCostUsd, todayUsageState.exchangeRate),
     },
   ];
 
@@ -2324,14 +2498,42 @@ function renderTodayUsage(){
   </div>`;
 }
 
-async function loadTodayUsageSummary(){
+async function loadTodayUsageSummary(options){
+  const opts = options || {};
   const requestId = ++loadTodayUsageRequestSeq;
-  todayUsageState.isLoading = true;
+  const cached = readCostSummaryCache();
+  if(cached && cached.data){
+    setTodayUsageFromCostSummary(cached.data);
+    if(!opts.backgroundRefresh){
+      renderTodayUsage();
+      if(state.activeSession){
+        renderActiveSession();
+      }
+    }
+    if(!opts.forceRefresh){
+      if(isCostSummaryCacheFresh(cached)){
+        scheduleNextCostSummaryRefresh(COST_SUMMARY_PRELOAD_INTERVAL_MS);
+        return;
+      }
+      if(opts.backgroundRefresh){
+        todayUsageState.hasError = false;
+      }
+    }
+  }
+
+  todayUsageState.isLoading = !opts.backgroundRefresh && !todayUsageState.hasLoaded;
   todayUsageState.hasError = false;
-  renderTodayUsage();
+  if(!opts.backgroundRefresh){
+    renderTodayUsage();
+  }
 
   try {
-    const response = await fetch('/api/cost-summary?ts=' + Date.now(), { cache: 'no-store' });
+    const params = new URLSearchParams();
+    params.set('ts', Date.now().toString());
+    if(opts.forceRefresh){
+      params.set('force', '1');
+    }
+    const response = await fetch('/api/cost-summary?' + params.toString(), { cache: 'no-store' });
     if(!response.ok){
       throw new Error(`HTTP ${response.status}`);
     }
@@ -2339,24 +2541,27 @@ async function loadTodayUsageSummary(){
     if(requestId !== loadTodayUsageRequestSeq){
       return;
     }
-    const today = getTodayUsagePeriod(data);
-    const requestCount = Number(today && today.request_count);
-    const premiumRequestCount = Number(today && today.premium_request_count);
-    const totalCostUsd = Number(today && today.total_cost_usd);
-    todayUsageState.requestCount = Number.isFinite(requestCount) ? requestCount : 0;
-    todayUsageState.premiumRequestCount = Number.isFinite(premiumRequestCount) ? premiumRequestCount : 0;
-    todayUsageState.totalCostUsd = Number.isFinite(totalCostUsd) ? totalCostUsd : 0;
-    todayUsageState.hasLoaded = true;
-    todayUsageState.hasError = false;
+    writeCostSummaryCache(data);
+    setTodayUsageFromCostSummary(data);
+    scheduleNextCostSummaryRefresh(COST_SUMMARY_PRELOAD_INTERVAL_MS);
   } catch (error) {
     if(requestId !== loadTodayUsageRequestSeq){
       return;
     }
-    todayUsageState.hasError = true;
+    if(!todayUsageState.hasLoaded){
+      todayUsageState.exchangeRate = null;
+    }
+    todayUsageState.hasError = !todayUsageState.hasLoaded;
+    scheduleNextCostSummaryRefresh(COST_SUMMARY_PRELOAD_INTERVAL_MS);
   } finally {
     if(requestId === loadTodayUsageRequestSeq){
       todayUsageState.isLoading = false;
-      renderTodayUsage();
+      if(!opts.backgroundRefresh || todayUsageState.hasLoaded){
+        renderTodayUsage();
+        if(state.activeSession){
+          renderActiveSession();
+        }
+      }
     }
   }
 }
@@ -2376,7 +2581,11 @@ function openCostsWindow(){
     costsWindow.focus();
     return;
   }
-  costsWindow = window.open(`/costs?lang=${encodeURIComponent(uiLanguage)}`, 'github_copilot_costs', features);
+  const params = new URLSearchParams({
+    lang: uiLanguage,
+    currency: getPreferredCostCurrencyCode(),
+  });
+  costsWindow = window.open(`/costs?${params.toString()}`, 'github_copilot_costs', features);
 }
 
 function highlightSessionPath(s){
@@ -2415,6 +2624,83 @@ function formatUsd(amount){
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatJpy(amount){
+  if(!Number.isFinite(amount)) return '';
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'JPY',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatCny(amount){
+  if(!Number.isFinite(amount)) return '';
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'CNY',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(amount);
+}
+
+function formatLocalCurrency(amount, currencyCode){
+  if(!Number.isFinite(amount) || !currencyCode || currencyCode === 'USD') return '';
+  if(currencyCode === 'JPY') return formatJpy(amount);
+  if(currencyCode === 'CNY') return formatCny(amount);
+  const locale = NUMBER_LOCALE_MAP[uiLanguage] || NUMBER_LOCALE_MAP.en;
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: currencyCode,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(amount);
+}
+
+function getExchangeRateValue(exchangeRate, currencyCode){
+  if(!exchangeRate || currencyCode === 'USD'){
+    return null;
+  }
+  const rate = currencyCode === 'JPY'
+    ? Number(exchangeRate.jpy_rate)
+    : currencyCode === 'CNY'
+      ? Number(exchangeRate.cny_rate)
+      : currencyCode === 'TWD'
+        ? Number(exchangeRate.twd_rate)
+        : currencyCode === 'HKD'
+          ? Number(exchangeRate.hkd_rate)
+          : NaN;
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+function convertUsdToLocalCurrency(amount, exchangeRate, currencyCode){
+  const usd = Number(amount);
+  const rate = getExchangeRateValue(exchangeRate, currencyCode);
+  if(!Number.isFinite(usd) || !Number.isFinite(rate) || rate <= 0){
+    return null;
+  }
+  return usd * rate;
+}
+
+function formatCostDisplay(amount, exchangeRate){
+  const usd = Number(amount);
+  if(!Number.isFinite(usd)){
+    return formatUsd(NaN);
+  }
+  const currencyCode = getPreferredCostCurrencyCode();
+  if(currencyCode === 'USD'){
+    return formatUsd(usd);
+  }
+  const localAmount = convertUsdToLocalCurrency(usd, exchangeRate, currencyCode);
+  if(localAmount == null){
+    return formatUsd(usd);
+  }
+  const localText = formatLocalCurrency(localAmount, currencyCode);
+  return localText ? `${formatUsd(usd)} / ${localText}` : formatUsd(usd);
 }
 
 function formatCount(value){
@@ -3669,6 +3955,12 @@ function normalizeRequestError(error, fallback){
   return fallback;
 }
 
+async function fetchSessionVersion(path){
+  const url = '/api/session-version?path=' + encodeURIComponent(path) + '&ts=' + Date.now();
+  const response = await fetch(url, { cache: 'no-store' });
+  return await response.json();
+}
+
 function getActiveSortOrder(){
   const active = document.querySelector('.sort-tab.active');
   return active ? active.dataset.sort : 'desc';
@@ -3682,32 +3974,247 @@ function setActiveSortOrder(value){
   });
 }
 
+function shouldUseProgressiveInitialSessionLoad(loadMode){
+  return loadMode === 'initial';
+}
+
+function buildSessionListRequestParams(options){
+  const opts = options || {};
+  const params = new URLSearchParams();
+  params.set('ts', Date.now().toString());
+
+  if(typeof opts.offset === 'number' && Number.isFinite(opts.offset) && opts.offset >= 0){
+    params.set('offset', String(opts.offset));
+  }
+
+  if(typeof opts.limit === 'number' && Number.isFinite(opts.limit) && opts.limit > 0){
+    params.set('limit', String(opts.limit));
+  }
+
+  const q = typeof opts.q === 'string' ? opts.q.trim() : '';
+  if(q){
+    params.set('q', q);
+    params.set('mode', opts.searchMode === 'or' ? 'or' : 'and');
+  }
+
+  if(opts.sessionLabelId){
+    params.set('session_label_id', opts.sessionLabelId);
+  }
+
+  if(opts.eventLabelId){
+    params.set('event_label_id', opts.eventLabelId);
+  }
+
+  if(opts.sortOrder && opts.sortOrder !== 'desc'){
+    params.set('sort', opts.sortOrder);
+  }
+
+  if(opts.force){
+    params.set('force', '1');
+  }
+
+  return params;
+}
+
+function shouldUseFilteredSessionsEndpoint(q, sessionLabelId, eventLabelId){
+  return !!(q || sessionLabelId || eventLabelId);
+}
+
+function getSessionListTotalCount(data, fallbackCount){
+  const totalCount = Number(data && data.total_count);
+  return Number.isFinite(totalCount) && totalCount >= 0 ? totalCount : fallbackCount;
+}
+
+function getSessionListFilterState(){
+  const cwdQ = document.getElementById('cwd_q').value.toLowerCase().trim();
+  const sourceFilter = normalizeSourceFilter(document.getElementById('source_filter').value || 'all');
+  const fromTs = parseOptionalDateStart(getFpDateValue('date_from'));
+  const toTs = parseOptionalDateEnd(getFpDateValue('date_to'));
+  const evFromTs = parseOptionalDatetimeStart(buildDateTimeIsoFromParts(
+    getFpDateValue('event_date_from_date'),
+    document.getElementById('event_date_from_time').value,
+    'start'
+  ));
+  const evToTs = parseOptionalDatetimeEnd(buildDateTimeIsoFromParts(
+    getFpDateValue('event_date_to_date'),
+    document.getElementById('event_date_to_time').value,
+    'end'
+  ));
+  return {
+    cwdQ,
+    sourceFilter,
+    fromTs,
+    toTs,
+    evFromTs,
+    evToTs,
+  };
+}
+
+function matchesSessionListFilters(session, filters){
+  const cwdMatched = !filters.cwdQ || (session.cwd || '').toLowerCase().includes(filters.cwdQ);
+  const sourceMatched = filters.sourceFilter === 'all' || normalizeSource(session.source) === filters.sourceFilter;
+
+  let dateMatched = true;
+  if(filters.fromTs !== null || filters.toTs !== null){
+    const sessionTs = toTimestamp(session.started_at || session.mtime);
+    if(Number.isNaN(sessionTs)){
+      dateMatched = false;
+    } else {
+      if(filters.fromTs !== null && sessionTs < filters.fromTs){
+        dateMatched = false;
+      }
+      if(filters.toTs !== null && sessionTs > filters.toTs){
+        dateMatched = false;
+      }
+    }
+  }
+
+  let eventDateMatched = true;
+  if(filters.evFromTs !== null || filters.evToTs !== null){
+    const minTs = session.min_event_ts ? toTimestamp(session.min_event_ts) : NaN;
+    const maxTs = session.max_event_ts ? toTimestamp(session.max_event_ts) : NaN;
+    if(Number.isNaN(minTs) || Number.isNaN(maxTs)){
+      eventDateMatched = false;
+    } else {
+      if(filters.evFromTs !== null && maxTs < filters.evFromTs){
+        eventDateMatched = false;
+      }
+      if(filters.evToTs !== null && minTs > filters.evToTs){
+        eventDateMatched = false;
+      }
+    }
+  }
+
+  return cwdMatched && sourceMatched && dateMatched && eventDateMatched;
+}
+
+function appendLoadedSessions(sessions){
+  const previousFilteredCount = state.filtered.length;
+  state.sessions = state.sessions.concat(sessions);
+  const filters = getSessionListFilterState();
+  const appendedFiltered = sessions.filter(session => matchesSessionListFilters(session, filters));
+  state.filtered = state.filtered.concat(appendedFiltered);
+  renderSessionList({ appendSessions: appendedFiltered, previousFilteredCount });
+}
+
+async function fetchSessionListChunk(requestId, requestOptions, offset){
+  const params = buildSessionListRequestParams({
+    q: requestOptions.q,
+    searchMode: requestOptions.searchMode,
+    sessionLabelId: requestOptions.sessionLabelId,
+    eventLabelId: requestOptions.eventLabelId,
+    sortOrder: requestOptions.sortOrder,
+    offset,
+  });
+  const endpoint = shouldUseFilteredSessionsEndpoint(
+    requestOptions.q,
+    requestOptions.sessionLabelId,
+    requestOptions.eventLabelId
+  ) ? '/api/sessions' : '/api/sessions-lite';
+  const response = await fetch(endpoint + '?' + params.toString(), { cache: 'no-store' });
+  const data = await response.json();
+  if(requestId !== loadSessionsRequestSeq){
+    return null;
+  }
+  return data;
+}
+
+async function loadSessionsProgressively(requestId, requestOptions){
+  const firstData = await fetchSessionListChunk(requestId, requestOptions, 0);
+  if(!firstData){
+    return;
+  }
+
+  state.sessions = Array.isArray(firstData.sessions) ? firstData.sessions : [];
+  state.sessionsTotalCount = getSessionListTotalCount(firstData, state.sessions.length);
+  state.sessionRoot = firstData.root || '';
+  state.hasLoadedSessions = true;
+  state.isSessionsLoading = false;
+  applyFilter();
+
+  let offset = state.sessions.length;
+  let hasMore = !!firstData.has_more && offset < state.sessionsTotalCount;
+  state.isSessionsBackgroundLoading = hasMore;
+  renderSessionList();
+
+  while(hasMore){
+    await new Promise(resolve => scheduleBackgroundTask(resolve, SESSION_BACKGROUND_APPEND_DELAY_MS));
+    if(requestId !== loadSessionsRequestSeq){
+      return;
+    }
+
+    const nextData = await fetchSessionListChunk(requestId, requestOptions, offset);
+    if(!nextData){
+      return;
+    }
+
+    const nextSessions = Array.isArray(nextData.sessions) ? nextData.sessions : [];
+    if(nextSessions.length === 0){
+      hasMore = false;
+      break;
+    }
+
+    state.sessionRoot = nextData.root || state.sessionRoot;
+    state.sessionsTotalCount = getSessionListTotalCount(nextData, state.sessions.length + nextSessions.length);
+    appendLoadedSessions(nextSessions);
+    offset += nextSessions.length;
+    hasMore = !!nextData.has_more && offset < state.sessionsTotalCount;
+    state.isSessionsBackgroundLoading = hasMore;
+    renderSessionList();
+  }
+}
+
 async function loadSessions(options){
   saveFilters();
   const requestId = ++loadSessionsRequestSeq;
   const loadMode = options && options.mode ? options.mode : 'auto';
   state.isSessionsLoading = true;
+  state.isSessionsBackgroundLoading = false;
   state.sessionsError = '';
   state.sessionsLoadMode = loadMode;
   renderSessionList();
-  const params = new URLSearchParams();
-  params.set('ts', Date.now().toString());
   const q = document.getElementById('q').value.trim();
-  if(q){
-    params.set('q', q);
-    params.set('mode', document.getElementById('mode').value);
-  }
+  const searchMode = document.getElementById('mode').value;
   const sessionLabelId = getSelectedSessionLabelFilter();
   const eventLabelId = getSelectedListEventLabelFilter();
-  if(sessionLabelId){
-    params.set('session_label_id', sessionLabelId);
-  }
-  if(eventLabelId){
-    params.set('event_label_id', eventLabelId);
-  }
   const sortOrder = getActiveSortOrder();
-  if(sortOrder && sortOrder !== 'desc'){
-    params.set('sort', sortOrder);
+  const params = buildSessionListRequestParams({
+    q,
+    searchMode,
+    sessionLabelId,
+    eventLabelId,
+    sortOrder,
+    force: loadMode === 'reload' || loadMode === 'reload_refresh',
+  });
+  if(shouldUseProgressiveInitialSessionLoad(loadMode)){
+    state.sessions = [];
+    state.filtered = [];
+    state.sessionsTotalCount = 0;
+    renderSessionList();
+    try {
+      await loadSessionsProgressively(requestId, {
+        q,
+        searchMode,
+        sessionLabelId,
+        eventLabelId,
+        sortOrder,
+      });
+    } catch (error) {
+      if(requestId !== loadSessionsRequestSeq){
+        return;
+      }
+      state.sessionsError = normalizeRequestError(error, t('error.sessions'));
+      renderSessionList();
+    } finally {
+      if(requestId === loadSessionsRequestSeq){
+        state.isSessionsLoading = false;
+        state.isSessionsBackgroundLoading = false;
+        state.hasLoadedSessions = true;
+        state.sessionsLoadMode = '';
+        renderSessionList();
+      }
+    }
+    return;
   }
   try {
     const r = await fetch('/api/sessions?' + params.toString(), { cache: 'no-store' });
@@ -3716,6 +4223,7 @@ async function loadSessions(options){
       return;
     }
     state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    state.sessionsTotalCount = state.sessions.length;
     state.sessionsError = data.error || '';
     state.sessionRoot = data.root || '';
     applyFilter();
@@ -3743,6 +4251,7 @@ async function loadSessions(options){
         state.activeSession = null;
         state.activeEvents = [];
         state.activeRawLineCount = 0;
+        state.activeSessionVersion = '';
         state.detailError = '';
         state.detailLoadMode = '';
         clearSelectedEventIds();
@@ -3920,61 +4429,8 @@ function clearFilters(){
 }
 
 function applyFilter(){
-  const cwdQ = document.getElementById('cwd_q').value.toLowerCase().trim();
-  const sourceFilter = normalizeSourceFilter(document.getElementById('source_filter').value || 'all');
-  const fromRaw = getFpDateValue('date_from');
-  const toRaw = getFpDateValue('date_to');
-  const fromTs = parseOptionalDateStart(fromRaw);
-  const toTs = parseOptionalDateEnd(toRaw);
-  const evFromRaw = buildDateTimeIsoFromParts(
-    getFpDateValue('event_date_from_date'),
-    document.getElementById('event_date_from_time').value,
-    'start'
-  );
-  const evToRaw = buildDateTimeIsoFromParts(
-    getFpDateValue('event_date_to_date'),
-    document.getElementById('event_date_to_time').value,
-    'end'
-  );
-  const evFromTs = parseOptionalDatetimeStart(evFromRaw);
-  const evToTs = parseOptionalDatetimeEnd(evToRaw);
-  state.filtered = state.sessions.filter(s => {
-    const cwdMatched = !cwdQ || (s.cwd || '').toLowerCase().includes(cwdQ);
-    const sourceMatched = sourceFilter === 'all' || normalizeSource(s.source) === sourceFilter;
-
-    let dateMatched = true;
-    if(fromTs !== null || toTs !== null){
-      const sessionTs = toTimestamp(s.started_at || s.mtime);
-      if(Number.isNaN(sessionTs)){
-        dateMatched = false;
-      } else {
-        if(fromTs !== null && sessionTs < fromTs){
-          dateMatched = false;
-        }
-        if(toTs !== null && sessionTs > toTs){
-          dateMatched = false;
-        }
-      }
-    }
-
-    let eventDateMatched = true;
-    if(evFromTs !== null || evToTs !== null){
-      const minTs = s.min_event_ts ? toTimestamp(s.min_event_ts) : NaN;
-      const maxTs = s.max_event_ts ? toTimestamp(s.max_event_ts) : NaN;
-      if(Number.isNaN(minTs) || Number.isNaN(maxTs)){
-        eventDateMatched = false;
-      } else {
-        if(evFromTs !== null && maxTs < evFromTs){
-          eventDateMatched = false;
-        }
-        if(evToTs !== null && minTs > evToTs){
-          eventDateMatched = false;
-        }
-      }
-    }
-
-    return cwdMatched && sourceMatched && dateMatched && eventDateMatched;
-  });
+  const filters = getSessionListFilterState();
+  state.filtered = state.sessions.filter(session => matchesSessionListFilters(session, filters));
   saveFilters();
   renderSessionList();
 }
@@ -4075,8 +4531,12 @@ function renderLabeledGroup(title, count, cardsHtml){
   `;
 }
 
-function renderSessionList(){
+function renderSessionList(options){
+  const opts = options || {};
+  const appendSessions = Array.isArray(opts.appendSessions) ? opts.appendSessions : null;
+  const previousFilteredCount = Number.isFinite(opts.previousFilteredCount) ? opts.previousFilteredCount : 0;
   const box = document.getElementById('sessions');
+  const previousScrollTop = box ? box.scrollTop : 0;
   updateReloadButtonState();
   if(state.isSessionsLoading && !state.hasLoadedSessions){
     box.innerHTML = renderInlineStatus(
@@ -4102,9 +4562,19 @@ function renderSessionList(){
           t('status.sessions.emptyCopy'),
           'empty'
         );
+  } else if(appendSessions && (appendSessions.length > 0 || previousFilteredCount > 0)){
+    if(previousFilteredCount === 0){
+      box.innerHTML = appendSessions.map(s => renderSessionCard(s, { active: state.activePath === s.path })).join('');
+    } else if(appendSessions.length > 0){
+      box.insertAdjacentHTML('beforeend', appendSessions.map(s => renderSessionCard(s, { active: state.activePath === s.path })).join(''));
+    }
   } else {
     box.innerHTML = state.filtered.map(s => renderSessionCard(s, { active: state.activePath === s.path })).join('');
   }
+  if(box){
+    box.scrollTop = previousScrollTop;
+  }
+  updateSessionsBackgroundIndicator();
   if(state.isSessionsLoading && state.hasLoadedSessions && (state.sessionsLoadMode === 'reload' || state.sessionsLoadMode === 'reload_refresh' || state.sessionsLoadMode === 'auto' || state.sessionsLoadMode === 'clear')){
     setStatusLayer(
       'sessions_status',
@@ -4117,10 +4587,11 @@ function renderSessionList(){
   }
   const countEl = document.getElementById('session_count');
   if(countEl){
-    if(state.hasLoadedSessions && state.sessions.length > 0){
+    if(state.hasLoadedSessions && (state.sessions.length > 0 || state.sessionsTotalCount > 0)){
       const currentIndex = state.activePath ? state.filtered.findIndex(s => s.path === state.activePath) : -1;
       const currentLabel = currentIndex >= 0 ? String(currentIndex + 1) : '-';
-      countEl.textContent = t('summary.sessions', { current: currentLabel, filtered: state.filtered.length, total: state.sessions.length });
+      const totalCount = state.sessionsTotalCount || state.sessions.length;
+      countEl.textContent = t('summary.sessions', { current: currentLabel, filtered: state.filtered.length, total: totalCount });
     } else {
       countEl.textContent = '';
     }
@@ -4670,7 +5141,7 @@ function renderActiveSession(){
     : '-';
   const premiumUnitPriceSummary = formatUsd(PREMIUM_REQUEST_UNIT_PRICE_USD);
   const premiumTotalCostSummary = Number.isFinite(state.activeSession.premium_request_count)
-    ? formatUsd(state.activeSession.premium_request_count * PREMIUM_REQUEST_UNIT_PRICE_USD)
+    ? formatCostDisplay(state.activeSession.premium_request_count * PREMIUM_REQUEST_UNIT_PRICE_USD, todayUsageState.exchangeRate)
     : '-';
   const modelSummary = (state.activeSession.model || '').toString().trim() || '-';
   const errorNote = state.detailError
@@ -4772,6 +5243,10 @@ async function openSession(path, options){
   const nextSession = state.sessions.find(s => s.path === path) || null;
   const previousPath = state.activeSession && state.activeSession.path ? state.activeSession.path : state.activePath;
   const loadMode = options && options.mode ? options.mode : 'open';
+  const canCheckVersionFirst = previousPath === path
+    && state.activeEvents.length > 0
+    && !!state.activeSessionVersion
+    && (loadMode === 'open' || loadMode === 'refresh' || loadMode === 'sync');
   if(!(options && options.preserveLabeledFocus)){
     pendingLabeledEventFocusId = '';
   }
@@ -4779,23 +5254,50 @@ async function openSession(path, options){
     pendingAutomaticDetailSync = false;
     clearDeferredDetailSyncTimer();
   }
-  state.activePath = path;
-  state.isDetailLoading = true;
-  state.detailError = '';
-  state.detailLoadMode = loadMode;
   if(nextSession){
-    state.activeSession = nextSession;
+    state.activeSession = {
+      ...(state.activeSession || {}),
+      ...nextSession,
+    };
   }
+  state.activePath = path;
   if(!state.activeSession || state.activeSession.path !== path){
     state.activeSession = nextSession;
   }
+  if(canCheckVersionFirst){
+    renderSessionList();
+    renderLabeledList();
+    renderActiveSession();
+    try {
+      const versionData = await fetchSessionVersion(path);
+      if(requestId !== loadSessionDetailRequestSeq) return;
+      if(!versionData.error && versionData.session_version && versionData.session_version === state.activeSessionVersion){
+        state.detailError = '';
+        renderSessionList();
+        renderLabeledList();
+        renderActiveSession();
+        return;
+      }
+    } catch (error) {
+      if(requestId !== loadSessionDetailRequestSeq){
+        return;
+      }
+      // Fall through to the full refresh path when version check fails.
+    }
+  }
+  const effectiveLoadMode = canCheckVersionFirst ? 'refresh' : loadMode;
+  state.isDetailLoading = true;
+  state.detailError = '';
+  state.detailLoadMode = effectiveLoadMode;
   if(previousPath !== path){
     state.activeEvents = [];
     state.activeRawLineCount = 0;
+    state.activeSessionVersion = '';
     clearSelectedEventIds();
     clearMessageRangeSelection();
   }
   renderSessionList();
+  renderLabeledList();
   renderActiveSession();
   try {
     const metaUrl = '/api/session?path=' + encodeURIComponent(path) + '&include_events=false&ts=' + Date.now();
@@ -4808,6 +5310,7 @@ async function openSession(path, options){
       return;
     }
     state.activeSession = metaData.session || nextSession;
+    state.activeSessionVersion = metaData.session_version || state.activeSessionVersion;
     state.detailError = '';
     renderActiveSession();
 
@@ -4823,6 +5326,7 @@ async function openSession(path, options){
     state.activeSession = eventsData.session || state.activeSession;
     state.activeEvents = eventsData.events || [];
     state.activeRawLineCount = eventsData.raw_line_count || 0;
+    state.activeSessionVersion = eventsData.session_version || state.activeSessionVersion;
     state.detailError = '';
     syncSelectedEventIdsToActiveEvents();
     syncSelectedMessageRangeToActiveEvents();
@@ -4835,6 +5339,8 @@ async function openSession(path, options){
     if(requestId === loadSessionDetailRequestSeq){
       state.isDetailLoading = false;
       state.detailLoadMode = '';
+      renderSessionList();
+      renderLabeledList();
       renderActiveSession();
     }
   }
@@ -4843,7 +5349,7 @@ async function openSession(path, options){
 async function refreshActiveSession(){
   if(!state.activePath) return;
   await openSession(state.activePath, { mode: 'refresh' });
-  void loadTodayUsageSummary();
+  await loadTodayUsageSummary({ forceRefresh: true });
 }
 
 function isEditableTarget(target){
@@ -4990,7 +5496,7 @@ async function triggerViewerRefresh(){
     if(state.activePath){
       await openSession(state.activePath, { mode: 'refresh' });
     }
-    await loadTodayUsageSummary();
+    await loadTodayUsageSummary({ forceRefresh: true });
     return;
   }
   const loadMode = state.activePath ? 'reload_refresh' : 'reload';
@@ -4998,7 +5504,7 @@ async function triggerViewerRefresh(){
   if(loadMode === 'reload_refresh' && state.activePath){
     await openSession(state.activePath, { mode: 'refresh' });
   }
-  await loadTodayUsageSummary();
+  await loadTodayUsageSummary({ forceRefresh: true });
 }
 
 function moveDetailKeywordSearchByShortcut(step){
@@ -5217,6 +5723,9 @@ function initViewerPage(){
   });
   document.getElementById('language_select').addEventListener('change', (event) => {
     setUiLanguage(event.target.value);
+  });
+  document.getElementById('currency_select').addEventListener('change', (event) => {
+    setCostCurrency(event.target.value);
   });
   document.getElementById('detail_keyword_q').addEventListener('keydown', (event) => {
     if(event.key === 'Enter' && !event.isComposing){
@@ -5483,12 +5992,29 @@ function initViewerPage(){
     await refreshLabeledViews();
   });
   window.addEventListener('storage', (event) => {
-    if(event.key !== LANGUAGE_STORAGE_KEY){
+    if(event.key === LANGUAGE_STORAGE_KEY){
+      const nextLanguage = normalizeLanguage(event.newValue || 'ja');
+      if(nextLanguage !== uiLanguage){
+        setUiLanguage(nextLanguage, false);
+      }
       return;
     }
-    const nextLanguage = normalizeLanguage(event.newValue || 'ja');
-    if(nextLanguage !== uiLanguage){
-      setUiLanguage(nextLanguage, false);
+    if(event.key === COST_CURRENCY_STORAGE_KEY){
+      const nextCurrency = normalizeCostCurrency(event.newValue || '') || getDefaultCostCurrencyForLanguage(uiLanguage);
+      if(nextCurrency !== getPreferredCostCurrencyCode()){
+        setCostCurrency(nextCurrency, false);
+      }
+      return;
+    }
+    if(event.key === COST_SUMMARY_CACHE_KEY){
+      const cached = readCostSummaryCache();
+      if(cached && cached.data){
+        setTodayUsageFromCostSummary(cached.data);
+        renderTodayUsage();
+        if(state.activeSession){
+          renderActiveSession();
+        }
+      }
     }
   });
   window.addEventListener('resize', () => {
@@ -5509,6 +6035,7 @@ function initViewerPage(){
   initSegmentedInputs();
   initAllFlatpickr();
   setUiLanguage(getRequestedLanguage(), false);
+  setCostCurrency(getRequestedCostCurrency(), false);
   updateFilterVisibility();
   updateCompactUiMode();
   updateDetailMetaVisibility();

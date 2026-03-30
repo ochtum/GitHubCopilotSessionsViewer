@@ -1,9 +1,14 @@
 (() => {
 const LANGUAGE_STORAGE_KEY = 'github_copilot_sessions_viewer_language_v1';
+const COST_CURRENCY_STORAGE_KEY = 'github_copilot_sessions_viewer_cost_currency_v1';
+const COST_SUMMARY_CACHE_KEY = 'github_copilot_sessions_viewer_cost_summary_cache_v1';
+const COST_SUMMARY_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 const SUPPORTED_LANGUAGES = ['ja', 'en', 'zh-Hans', 'zh-Hant'];
+const SUPPORTED_COST_CURRENCIES = ['USD', 'JPY', 'CNY', 'TWD', 'HKD'];
 const I18N = {
   ja: {
     'language.selector': '言語',
+    'currency.selector': '通貨',
     'page.title': 'コスト表示 | GitHub Copilot Sessions Viewer',
     'page.badge': 'GitHub Copilot Sessions Viewer',
     'page.heroTitle': 'コスト表示',
@@ -33,6 +38,7 @@ const I18N = {
   },
   en: {
     'language.selector': 'Language',
+    'currency.selector': 'Currency',
     'page.title': 'Cost Summary | GitHub Copilot Sessions Viewer',
     'page.badge': 'GitHub Copilot Sessions Viewer',
     'page.heroTitle': 'Cost Summary',
@@ -62,6 +68,7 @@ const I18N = {
   },
   'zh-Hans': {
     'language.selector': '语言',
+    'currency.selector': '货币',
     'page.title': '成本汇总 | GitHub Copilot Sessions Viewer',
     'page.badge': 'GitHub Copilot Sessions Viewer',
     'page.heroTitle': '成本汇总',
@@ -93,6 +100,7 @@ const I18N = {
 I18N['zh-Hant'] = {
   ...I18N['zh-Hans'],
   'language.selector': '語言',
+  'currency.selector': '幣別',
   'page.title': '成本彙總 | GitHub Copilot Sessions Viewer',
   'page.heroTitle': '成本彙總',
   'page.heroCopy': '可按月、週、日查看按 session 彙總的 request、premium request 和 total cost。進行中的 session 不會計入 premium request 和 total cost。',
@@ -117,7 +125,9 @@ I18N['zh-Hant'] = {
 };
 
 let uiLanguage = 'ja';
+let selectedCostCurrency = 'USD';
 let costSummaryData = null;
+let isLoading = false;
 
 function normalizeLanguage(value){
   const raw = (value || '').trim();
@@ -128,6 +138,25 @@ function normalizeLanguage(value){
     return 'zh-Hant';
   }
   return SUPPORTED_LANGUAGES.includes(raw) ? raw : 'ja';
+}
+
+function normalizeCostCurrency(value){
+  const raw = (value || '').trim().toUpperCase();
+  return SUPPORTED_COST_CURRENCIES.includes(raw) ? raw : '';
+}
+
+function getDefaultCostCurrencyForLanguage(language){
+  const normalized = normalizeLanguage(language);
+  if(normalized === 'ja'){
+    return 'JPY';
+  }
+  if(normalized === 'zh-Hans'){
+    return 'CNY';
+  }
+  if(normalized === 'zh-Hant'){
+    return 'TWD';
+  }
+  return 'USD';
 }
 
 function t(key){
@@ -172,6 +201,99 @@ function formatUsd(value){
   }).format(numeric);
 }
 
+function formatJpy(value){
+  const numeric = Number(value);
+  if(!Number.isFinite(numeric)){
+    return '';
+  }
+  return new Intl.NumberFormat(getUiLocale(), {
+    style: 'currency',
+    currency: 'JPY',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(numeric);
+}
+
+function formatCny(value){
+  const numeric = Number(value);
+  if(!Number.isFinite(numeric)){
+    return '';
+  }
+  const digits = numeric >= 10 ? 2 : (numeric >= 1 ? 3 : 4);
+  return new Intl.NumberFormat(getUiLocale(), {
+    style: 'currency',
+    currency: 'CNY',
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(numeric);
+}
+
+function formatLocalCurrency(value, currencyCode){
+  const numeric = Number(value);
+  if(!Number.isFinite(numeric) || !currencyCode || currencyCode === 'USD'){
+    return '';
+  }
+  if(currencyCode === 'JPY'){
+    return formatJpy(numeric);
+  }
+  if(currencyCode === 'CNY'){
+    return formatCny(numeric);
+  }
+  const digits = numeric >= 10 ? 2 : (numeric >= 1 ? 3 : 4);
+  return new Intl.NumberFormat(getUiLocale(), {
+    style: 'currency',
+    currency: currencyCode,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(numeric);
+}
+
+function getPreferredCostCurrencyCode(){
+  return normalizeCostCurrency(selectedCostCurrency) || 'USD';
+}
+
+function getExchangeRateValue(exchangeRate, currencyCode){
+  if(!exchangeRate || currencyCode === 'USD'){
+    return null;
+  }
+  const rate = currencyCode === 'JPY'
+    ? Number(exchangeRate.jpy_rate)
+    : currencyCode === 'CNY'
+      ? Number(exchangeRate.cny_rate)
+      : currencyCode === 'TWD'
+        ? Number(exchangeRate.twd_rate)
+        : currencyCode === 'HKD'
+          ? Number(exchangeRate.hkd_rate)
+          : NaN;
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+function convertUsdToLocalCurrency(value, exchangeRate, currencyCode){
+  const usd = Number(value);
+  const rate = getExchangeRateValue(exchangeRate, currencyCode);
+  if(!Number.isFinite(usd) || !Number.isFinite(rate) || rate <= 0){
+    return null;
+  }
+  return usd * rate;
+}
+
+function formatCostDisplay(value, exchangeRate){
+  const usd = Number(value);
+  if(!Number.isFinite(usd)){
+    return formatUsd(NaN);
+  }
+  const currencyCode = getPreferredCostCurrencyCode();
+  if(currencyCode === 'USD'){
+    return formatUsd(usd);
+  }
+  const localValue = convertUsdToLocalCurrency(usd, exchangeRate, currencyCode);
+  if(localValue == null){
+    return formatUsd(usd);
+  }
+  const formattedLocal = formatLocalCurrency(localValue, currencyCode);
+  return formattedLocal ? `${formatUsd(usd)} / ${formattedLocal}` : formatUsd(usd);
+}
+
 function formatTimestamp(value){
   if(!value){
     return '-';
@@ -190,6 +312,53 @@ function setStatus(text, tone){
   }
   status.textContent = text || '';
   status.classList.toggle('error', tone === 'error');
+}
+
+function readCostSummaryCache(){
+  try {
+    const raw = localStorage.getItem(COST_SUMMARY_CACHE_KEY) || '';
+    if(!raw){
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if(!parsed || typeof parsed !== 'object' || !parsed.data){
+      return null;
+    }
+    const savedAt = Number(parsed.saved_at);
+    return {
+      data: parsed.data,
+      savedAt: Number.isFinite(savedAt) ? savedAt : 0,
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeCostSummaryCache(data){
+  if(!data){
+    return;
+  }
+  try {
+    localStorage.setItem(COST_SUMMARY_CACHE_KEY, JSON.stringify({
+      saved_at: Date.now(),
+      data,
+    }));
+  } catch (error) {
+    // Ignore storage quota errors and keep the page state only.
+  }
+}
+
+function isCostSummaryCacheFresh(entry){
+  return !!entry
+    && Number.isFinite(entry.savedAt)
+    && entry.savedAt > 0
+    && (Date.now() - entry.savedAt) <= COST_SUMMARY_CACHE_MAX_AGE_MS;
+}
+
+function applyCostSummaryData(data){
+  costSummaryData = data || null;
+  renderMeta();
+  renderGroups();
 }
 
 function renderMeta(){
@@ -219,7 +388,7 @@ function renderTable(periods){
       <td class="costs-period-label">${esc(t(`period.${period.key}`))}</td>
       <td>${esc(formatNumber(period.request_count || 0))}</td>
       <td>${esc(formatNumber(period.premium_request_count || 0))}</td>
-      <td>${esc(formatUsd(period.total_cost_usd || 0))}</td>
+      <td>${esc(formatCostDisplay(period.total_cost_usd || 0, costSummaryData && costSummaryData.exchange_rate))}</td>
     </tr>`;
   }).join('')}</tbody></table></div>`;
 }
@@ -253,6 +422,11 @@ function applyLanguage(){
     languageSelect.value = uiLanguage;
     languageSelect.setAttribute('aria-label', t('language.selector'));
   }
+  const currencySelect = document.getElementById('currency_select');
+  if(currencySelect){
+    currencySelect.value = getPreferredCostCurrencyCode();
+    currencySelect.setAttribute('aria-label', t('currency.selector'));
+  }
   const refresh = document.getElementById('refresh_costs');
   if(refresh){
     refresh.textContent = t('page.refresh');
@@ -273,27 +447,37 @@ function applyLanguage(){
   renderGroups();
 }
 
-async function loadCostSummary(){
+async function loadCostSummary(options){
+  const opts = options || {};
+  isLoading = true;
   const refresh = document.getElementById('refresh_costs');
   if(refresh){
     refresh.disabled = true;
   }
-  setStatus(t('status.loading'));
+  if(!opts.silent){
+    setStatus(t('status.loading'));
+  }
   try {
-    const response = await fetch(`/api/cost-summary?ts=${Date.now()}`, { cache: 'no-store' });
+    const params = new URLSearchParams();
+    params.set('ts', Date.now().toString());
+    if(opts.forceRefresh){
+      params.set('force', '1');
+    }
+    const response = await fetch(`/api/cost-summary?${params.toString()}`, { cache: 'no-store' });
     if(!response.ok){
       throw new Error(`HTTP ${response.status}`);
     }
-    costSummaryData = await response.json();
-    renderMeta();
-    renderGroups();
+    const data = await response.json();
+    writeCostSummaryCache(data);
+    applyCostSummaryData(data);
     setStatus('');
   } catch (error) {
-    costSummaryData = null;
-    renderMeta();
-    renderGroups();
+    if(!costSummaryData || opts.clearOnError){
+      applyCostSummaryData(null);
+    }
     setStatus(t('status.error'), 'error');
   } finally {
+    isLoading = false;
     if(refresh){
       refresh.disabled = false;
     }
@@ -308,6 +492,22 @@ function loadInitialLanguage(){
   localStorage.setItem(LANGUAGE_STORAGE_KEY, uiLanguage);
 }
 
+function loadInitialCostCurrency(){
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = normalizeCostCurrency(params.get('currency'));
+  const stored = normalizeCostCurrency(localStorage.getItem(COST_CURRENCY_STORAGE_KEY));
+  selectedCostCurrency = fromQuery || stored || getDefaultCostCurrencyForLanguage(uiLanguage);
+  localStorage.setItem(COST_CURRENCY_STORAGE_KEY, selectedCostCurrency);
+}
+
+function setCostCurrency(nextCurrency, persist){
+  selectedCostCurrency = normalizeCostCurrency(nextCurrency) || getDefaultCostCurrencyForLanguage(uiLanguage);
+  if(persist !== false){
+    localStorage.setItem(COST_CURRENCY_STORAGE_KEY, selectedCostCurrency);
+  }
+  applyLanguage();
+}
+
 function initCostsPage(){
   if(!isCostsPage() || window.__githubCopilotCostsPageInitialized){
     return;
@@ -315,6 +515,7 @@ function initCostsPage(){
 
   window.__githubCopilotCostsPageInitialized = true;
   loadInitialLanguage();
+  loadInitialCostCurrency();
   applyLanguage();
 
   const languageSelect = document.getElementById('language_select');
@@ -326,25 +527,55 @@ function initCostsPage(){
     });
   }
 
+  const currencySelect = document.getElementById('currency_select');
+  if(currencySelect){
+    currencySelect.addEventListener('change', event => {
+      setCostCurrency(event.target.value);
+    });
+  }
+
   const refresh = document.getElementById('refresh_costs');
   if(refresh){
     refresh.addEventListener('click', () => {
-      void loadCostSummary();
+      void loadCostSummary({ forceRefresh: true });
     });
   }
 
   window.addEventListener('storage', event => {
-    if(event.key !== LANGUAGE_STORAGE_KEY){
+    if(event.key === LANGUAGE_STORAGE_KEY){
+      const nextLanguage = normalizeLanguage(event.newValue || 'ja');
+      if(nextLanguage !== uiLanguage){
+        uiLanguage = nextLanguage;
+        applyLanguage();
+      }
       return;
     }
-    const nextLanguage = normalizeLanguage(event.newValue || 'ja');
-    if(nextLanguage !== uiLanguage){
-      uiLanguage = nextLanguage;
-      applyLanguage();
+    if(event.key === COST_CURRENCY_STORAGE_KEY){
+      const nextCurrency = normalizeCostCurrency(event.newValue || '') || getDefaultCostCurrencyForLanguage(uiLanguage);
+      if(nextCurrency !== getPreferredCostCurrencyCode()){
+        setCostCurrency(nextCurrency, false);
+      }
+      return;
+    }
+    if(event.key === COST_SUMMARY_CACHE_KEY){
+      const cached = readCostSummaryCache();
+      if(cached && cached.data){
+        applyCostSummaryData(cached.data);
+        setStatus('');
+      }
     }
   });
 
-  void loadCostSummary();
+  const cached = readCostSummaryCache();
+  if(cached && cached.data){
+    applyCostSummaryData(cached.data);
+    setStatus('');
+    if(!isCostSummaryCacheFresh(cached)){
+      void loadCostSummary({ silent: true });
+    }
+  } else {
+    void loadCostSummary();
+  }
 }
 
 if(document.readyState === 'loading'){

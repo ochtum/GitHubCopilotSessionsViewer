@@ -126,15 +126,32 @@ public sealed class SessionListResponse
     public string Root { get; init; } = string.Empty;
 
     public IReadOnlyList<SessionSummaryDto> Sessions { get; init; } = [];
+
+    public int TotalCount { get; init; }
+
+    public int Offset { get; init; }
+
+    public int Limit { get; init; }
+
+    public bool HasMore { get; init; }
 }
 
 public sealed class SessionDetailResponse
 {
     public SessionSummaryDto? Session { get; init; }
 
+    public string SessionVersion { get; init; } = string.Empty;
+
     public IReadOnlyList<SessionEventDto> Events { get; init; } = [];
 
     public int RawLineCount { get; init; }
+}
+
+public sealed class SessionVersionResponse
+{
+    public string Path { get; init; } = string.Empty;
+
+    public string SessionVersion { get; init; } = string.Empty;
 }
 
 public sealed class CostSummaryPeriodDto
@@ -155,6 +172,21 @@ public sealed class CostSummaryGroupDto
     public IReadOnlyList<CostSummaryPeriodDto> Periods { get; init; } = [];
 }
 
+public sealed class ExchangeRateDto
+{
+    public string BaseCurrency { get; init; } = string.Empty;
+
+    public decimal JpyRate { get; init; }
+
+    public decimal CnyRate { get; init; }
+
+    public decimal TwdRate { get; init; }
+
+    public decimal HkdRate { get; init; }
+
+    public string FetchedAt { get; init; } = string.Empty;
+}
+
 public sealed class CostSummaryResponse
 {
     public string GeneratedAt { get; init; } = string.Empty;
@@ -162,6 +194,8 @@ public sealed class CostSummaryResponse
     public string TimeZoneId { get; init; } = string.Empty;
 
     public decimal UnitPriceUsd { get; init; }
+
+    public ExchangeRateDto? ExchangeRate { get; init; }
 
     public IReadOnlyList<CostSummaryGroupDto> Groups { get; init; } = [];
 }
